@@ -14,9 +14,10 @@ Query and summarize your documents or just chat with local private GPT LLMs usin
 - **Variety** of models supported (LLaMa2, Falcon, Vicuna, WizardLM including AutoGPTQ, 4-bit/8-bit, LORA)
 - **GPU** support from HF and LLaMa.cpp GGML models, and **CPU** support using HF, LLaMa.cpp, and GPT4ALL models
 - **Linux, Docker, MAC, and Windows** support
-- **Inference Servers** support (HF TGI server, vLLM, Gradio, ExLLaMa, OpenAI)
+- **Inference Servers** support (HF TGI server, vLLM, Gradio, ExLLaMa, Replicate, OpenAI)
 - **OpenAI-compliant Python client API** for client-server control
 - **Evaluate** performance using reward models
+- **Quality** maintained with over 300 unit and integration tests taking over 4 GPU-hours
 
 ### Getting Started
 
@@ -77,7 +78,7 @@ YouTube 4K version: https://www.youtube.com/watch?v=_iktbj4obAI
    * [CLI chat](docs/README_CLI.md)
    * [Gradio UI](docs/README_ui.md)
    * [Client API (Gradio, OpenAI-Compliant)](docs/README_CLIENT.md)
-   * [Inference Servers (TGI, vLLM, Gradio)](docs/README_InferenceServers.md)
+   * [Inference Servers (HF TGI server, vLLM, Gradio, ExLLaMa, Replicate, OpenAI)](docs/README_InferenceServers.md)
    * [Python Wheel](docs/README_WHEEL.md)
    * [Offline Installation](docs/README_offline.md)
    * [Low Memory](docs/FAQ.md#low-memory-mode)
@@ -128,9 +129,14 @@ GPU and CPU mode tested on variety of NVIDIA GPUs in Ubuntu 18-22, but any moder
 - To run h2oGPT tests:
     ```bash
     wget https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGML/resolve/main/llama-2-7b-chat.ggmlv3.q8_0.bin
-    pip install requirements-parser
-    pytest -s -v tests client/tests
+    pip install requirements-parser pytest-instafail
+    pytest --instafail -s -v tests
+    # for client tests
+    make -C client setup
+    make -C client build
+    pytest --instafail -s -v client/tests
     ```
+  or tweak/run `tests/test4gpus.sh` to run tests in parallel.
 
 ### Help
 

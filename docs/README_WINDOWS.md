@@ -83,10 +83,10 @@ For newer builds of windows versions of 10/11.
     pip install https://github.com/jllllll/exllama/releases/download/0.0.8/exllama-0.0.8+cu118-cp310-cp310-win_amd64.whl --no-cache-dir
     ```
 * GPU Optional: Support LLaMa.cpp with CUDA via llama-cpp-python:
-  * Download/Install [CUDA llama-cpp-python wheel](https://github.com/jllllll/llama-cpp-python-cuBLAS-wheels), e.g. [Download Python 3.10 CUDA 1.7 wheel](https://github.com/jllllll/llama-cpp-python-cuBLAS-wheels/releases/download/textgen-webui/llama_cpp_python_cuda-0.1.73+cu117-cp310-cp310-win_amd64.whl), then run:
+  * Download/Install [CUDA llama-cpp-python wheel](https://github.com/jllllll/llama-cpp-python-cuBLAS-wheels), or choose link and run pip directly.  E.g.:
     ```bash
       pip uninstall -y llama-cpp-python
-      pip install llama_cpp_python_cuda-0.1.73+cu117-cp310-cp310-win_amd64.whl
+      pip install https://github.com/jllllll/llama-cpp-python-cuBLAS-wheels/releases/download/textgen-webui/llama_cpp_python_cuda-0.1.73+cu117-cp310-cp310-win_amd64.whl
     ```
   * If any issues, then must compile llama-cpp-python with CUDA support:
     ```bash
@@ -96,7 +96,13 @@ For newer builds of windows versions of 10/11.
     set FORCE_CMAKE=1
     pip install llama-cpp-python==0.1.68 --no-cache-dir --verbose
     ```
-  * Uncomment `# n_gpu_layers=20` in `.env_gpt4all`.  One can try also `40` instead of `20`.
+  * By default, we set `n_gpu_layers` to large value, so llama.cpp offloads all layers for maximum GPU performance.  You can control this by uncommenting `# n_gpu_layers` and set to some value in `.env_gpt4all`.  For highest performance, offload *all* layers.
+    That is, one gets maximum performance if one sees in startup of h2oGPT all layers offloaded:
+      ```text
+    llama_model_load_internal: offloaded 35/35 layers to GPU
+    ```
+  but this requires sufficient GPU memory.  Reduce if you have low memory GPU, say 15.
+  * Pass to `generate.py` the option `--max_seq_len=2048` or some other number if you want model have controlled smaller context, else default (relatively large) value is used that will be slower on CPU.
   * If one sees `/usr/bin/nvcc` mentioned in errors, that file needs to be removed as would likely conflict with version installed for conda.
   * Note that once `llama-cpp-python` is compiled to support CUDA, it no longer works for CPU mode, so one would have to reinstall it without the above options to recovers CPU mode or have a separate h2oGPT env for CPU mode.
 * For supporting Word and Excel documents, if you don't have Word/Excel already, then download and install libreoffice: https://www.libreoffice.org/download/download-libreoffice/ .
@@ -107,17 +113,18 @@ For newer builds of windows versions of 10/11.
 ## Run
 * For document Q/A with UI using LLaMa.cpp-based model on CPU or GPU:
 
-  * Click [Download Wizard Model](https://huggingface.co/TheBloke/WizardLM-7B-uncensored-GGML/resolve/main/WizardLM-7B-uncensored.ggmlv3.q8_0.bin) and place file in h2oGPT directory.
+  * Click [Download LLaMa2 Model](https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGML/resolve/main/llama-2-7b-chat.ggmlv3.q8_0.bin) and place file in h2oGPT repo directory.  Any other TheBloke GGML v3 model can be used by downloading it and changing `model_path_llama` in `.env_gpt4all` to point to that new file.
        ```bash
-       python generate.py --base_model='llama' --prompt_type=wizard2 --score_model=None --langchain_mode='UserData' --user_path=user_path
+       python generate.py --base_model='llama' --prompt_type=llama2 --score_model=None --langchain_mode='UserData' --user_path=user_path
        ```
+    for an absolute windows path, change to `--user_path=C:\Users\YourUsername\h2ogpt` or something similar for some user `YourUsername`.
       If llama-cpp-python was compiled with CUDA support, you should see in the output:
     ```text
     Starting get_model: llama
     ggml_init_cublas: found 2 CUDA devices:
       Device 0: NVIDIA GeForce RTX 3090 Ti
       Device 1: NVIDIA GeForce RTX 2080
-    llama.cpp: loading model from WizardLM-7B-uncensored.ggmlv3.q8_0.bin
+    llama.cpp: loading model from llama-2-7b-chat.ggmlv3.q8_0.bin
     llama_model_load_internal: format     = ggjt v3 (latest)
     llama_model_load_internal: n_vocab    = 32001
     llama_model_load_internal: n_ctx      = 1792
@@ -139,7 +146,7 @@ For newer builds of windows versions of 10/11.
     llama_model_load_internal: total VRAM used: 4470 MB
     llama_new_context_with_model: kv self size  =  896.00 MB
     AVX = 1 | AVX2 = 1 | AVX512 = 0 | AVX512_VBMI = 0 | AVX512_VNNI = 0 | FMA = 1 | NEON = 0 | ARM_FMA = 0 | F16C = 1 | FP16_VA = 0 | WASM_SIMD = 0 | BLAS = 1 | SSE3 = 1 | VSX = 0 |
-    Model {'base_model': 'llama', 'tokenizer_base_model': '', 'lora_weights': '', 'inference_server': '', 'prompt_type': 'wizard2', 'prompt_dict': {'promptA': 'Below is an instruction that describes a task. Write a response that appropriately completes the request.', 'promptB': 'Below is an instruction that describes a task. Write a response that appropriately completes the request.', 'PreInstruct': '\n### Instruction:\n', 'PreInput': None, 'PreResponse': '\n### Response:\n', 'terminate_response': ['\n### Response:\n'], 'chat_sep': '\n', 'chat_turn_sep': '\n', 'humanstr': '\n### Instruction:\n', 'botstr': '\n### Response:\n', 'generates_leading_space': False}}
+    Model {'base_model': 'llama', 'tokenizer_base_model': '', 'lora_weights': '', 'inference_server': '', 'prompt_type': 'llama2', 'prompt_dict': {'promptA': 'Below is an instruction that describes a task. Write a response that appropriately completes the request.', 'promptB': 'Below is an instruction that describes a task. Write a response that appropriately completes the request.', 'PreInstruct': '\n### Instruction:\n', 'PreInput': None, 'PreResponse': '\n### Response:\n', 'terminate_response': ['\n### Response:\n'], 'chat_sep': '\n', 'chat_turn_sep': '\n', 'humanstr': '\n### Instruction:\n', 'botstr': '\n### Response:\n', 'generates_leading_space': False}}
     Running on local URL:  http://0.0.0.0:7860
   
     To create a public link, set `share=True` in `launch()`.
