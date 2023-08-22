@@ -12,6 +12,7 @@ sudo apt-get update
 sudo apt-get install nvidia-driver-470 # Change the version if necessary
 sudo reboot
 
+
 # Check if nvidia-smi is on the PATH
 if which nvidia-smi >/dev/null 2>&1; then
   echo "nvidia-smi is on the PATH and can be executed."
