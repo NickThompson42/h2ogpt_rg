@@ -26,6 +26,7 @@ sudo apt-get install -y nvidia-driver nvidia-kernel-support
 # Reboot the system
 sudo reboot
 
+
 # Check if nvidia-smi is on the PATH
 if which nvidia-smi >/dev/null 2>&1; then
   echo "nvidia-smi is on the PATH and can be executed."
