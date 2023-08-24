@@ -7,9 +7,23 @@
 # less royce_install_script.sh # this will allow you to check the script before running it to make sure it is not compromised
 # sudo ./royce_install_script.sh # this will run the script in the codespace.
 
-# Install NVIDIA Drivers
+# Set the keyboard layout to English US directly
+sudo sed -i 's/XKBLAYOUT=".*"/XKBLAYOUT="us"/g' /etc/default/keyboard
+sudo systemctl restart keyboard-setup
+
+# Add contrib and non-free repositories to enable NVIDIA driver installation
+sudo sed -i 's/main/main contrib non-free/g' /etc/apt/sources.list
+
+# Update the system's package index
 sudo apt-get update
-sudo apt-get install nvidia-driver-470 # Change the version if necessary
+
+# Install kernel headers
+sudo apt-get install -y linux-headers-$(uname -r)
+
+# Install NVIDIA driver and NVIDIA Kernel Support
+sudo apt-get install -y nvidia-driver nvidia-kernel-support
+
+# Reboot the system
 sudo reboot
 
 # Check if nvidia-smi is on the PATH
