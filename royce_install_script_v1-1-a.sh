@@ -8,24 +8,36 @@
 # sudo ./royce_install_script.sh # this will run the script in the codespace.
 
 # Set the keyboard layout to English US directly
-sudo sed -i 's/XKBLAYOUT=".*"/XKBLAYOUT="us"/g' /etc/default/keyboard
-sudo systemctl restart keyboard-setup
+sudo localectl set-keymap us
+sudo localectl set-x11-keymap us
 
 # Add contrib and non-free repositories to enable NVIDIA driver installation
 sudo sed -i 's/main/main contrib non-free/g' /etc/apt/sources.list
+
+# Wait for other software managers to finish
+while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+   echo "Waiting for other software managers to finish..."
+   sleep 5
+done
 
 # Update the system's package index
 sudo apt-get update
 
 # Install kernel headers
-sudo apt-get install -y linux-headers-$(uname -r)
+sudo apt-get install -y linux-headers-amd64
+
+# Wait for other software managers to finish
+while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+   echo "Waiting for other software managers to finish..."
+   sleep 5
+done
 
 # Install NVIDIA driver and NVIDIA Kernel Support
-sudo apt-get install -y nvidia-driver nvidia-kernel-support
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nvidia-driver nvidia-kernel-support
+
 
 # Reboot the system
 sudo reboot
-
 
 # Check if nvidia-smi is on the PATH
 if which nvidia-smi >/dev/null 2>&1; then
