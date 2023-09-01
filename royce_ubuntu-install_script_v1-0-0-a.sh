@@ -25,14 +25,21 @@ git --version
 # Install Miniconda
 install_miniconda() {
   # Download the Miniconda installer using curl
-  curl -O https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
-  
-  # Make the downloaded script executable
-  chmod +x Miniconda3-latest-Linux-x86_64.sh
-  
-  # Run the Miniconda installer in silent mode
-  echo "yes" | ./Miniconda3-latest-Linux-x86_64.sh -b -p $HOME/miniconda3
+  if curl -O https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh; then
+    # Make the downloaded script executable
+    chmod +x Miniconda3-latest-Linux-x86_64.sh
+    
+    # Run the Miniconda installer in silent mode
+    if echo "yes" | ./Miniconda3-latest-Linux-x86_64.sh -b -p $HOME/miniconda3; then
+      echo "Miniconda installed successfully."
+    else
+      echo "Miniconda installation failed."
+    fi
+  else
+    echo "Failed to download Miniconda installer."
+  fi
 }
+
 
 # Verify the installation by checking if 'conda' command is available
 source $HOME/miniconda3/etc/profile.d/conda.sh
