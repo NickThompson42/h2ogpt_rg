@@ -27,11 +27,11 @@ setup_environment() {
     #     sleep 5
     # done
 
-    echo "Waiting 10 seconds to install NVIDIA drivers"
-    sleep 10
+    # echo "Waiting 10 seconds to install NVIDIA drivers"
+    # sleep 10
 
-    # Install NVIDIA driver
-    sudo apt install -y nvidia-driver-470 # Or whichever is the latest
+    # # Install NVIDIA driver
+    # sudo apt install -y nvidia-driver-470 # Or whichever is the latest
 }
 
 # Call the function to execute it
@@ -109,9 +109,7 @@ fi
 git --version
 
 # Install Miniconda
-wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
-chmod +x Miniconda3-latest-Linux-x86_64.sh
-echo "yes" | ./Miniconda3-latest-Linux-x86_64.sh -b -p $HOME/miniconda3
+curl https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh | bash -s -- -b -p $HOME/miniconda3
 
 # Verify the installation by checking if 'conda' command is available
 source $HOME/miniconda3/etc/profile.d/conda.sh
