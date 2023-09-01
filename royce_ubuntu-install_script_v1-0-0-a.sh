@@ -4,7 +4,7 @@
 # to install follow these steps:
 
 # install_h2ogpt() {
-#   wget -O royce_ubuntu-install_script_v1-0-0-a.sh https://raw.githubusercontent.com/Royce-Geospatial-Consultants/h2ogpt_rg/ubuntu_install_script/royce_>
+#   wget -O royce_ubuntu-install_script_v1-0-0-a.sh https://github.com/Royce-Geospatial-Consultants/h2ogpt_rg/blob/wor-508_build-h2ogpt_rg-in-codespace/royce_ubuntu-install_script_v1-0-0-a.sh
 #   chmod +x royce_ubuntu-install_script_v1-0-0-a.sh
 #   sudo ./royce_ubuntu-install_script_v1-0-0-a.sh
 # }
