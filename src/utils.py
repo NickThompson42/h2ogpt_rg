@@ -7,6 +7,7 @@ import inspect
 import os
 import pathlib
 import pickle
+import platform
 import random
 import shutil
 import subprocess
@@ -25,6 +26,8 @@ import numpy as np
 import pandas as pd
 import requests
 import uuid
+
+import tabulate
 from fire import inspectutils
 from joblib import Parallel
 from tqdm.auto import tqdm
@@ -231,19 +234,20 @@ def _zip_data(root_dirs=None, zip_file=None, base_dir='./'):
 
 
 def save_generate_output(prompt=None, output=None, base_model=None, save_dir=None, where_from='unknown where from',
-                         extra_dict={}):
+                         extra_dict={}, error='', extra='', return_dict=False):
     if not save_dir:
         return
     try:
         return _save_generate_output(prompt=prompt, output=output, base_model=base_model, save_dir=save_dir,
-                                     where_from=where_from, extra_dict=extra_dict)
+                                     where_from=where_from, extra_dict=extra_dict, error=error, extra=extra,
+                                     return_dict=return_dict)
     except Exception as e:
         traceback.print_exc()
         print('Exception in saving: %s' % str(e))
 
 
 def _save_generate_output(prompt=None, output=None, base_model=None, save_dir=None, where_from='unknown where from',
-                          extra_dict={}):
+                          extra_dict={}, error='', extra='', return_dict=False):
     """
     Save conversation to .json, row by row.
     json_file_path is path to final JSON file. If not in ., then will attempt to make directories.
@@ -251,10 +255,6 @@ def _save_generate_output(prompt=None, output=None, base_model=None, save_dir=No
     """
     prompt = '<not set>' if prompt is None else prompt
     output = '<not set>' if output is None else output
-    if os.path.exists(save_dir) and not os.path.isdir(save_dir):
-        raise RuntimeError("save_dir already exists and is not a directory!")
-    makedirs(save_dir, exist_ok=True)  # already should be made, can't change at this point
-    import json
 
     # tokenize at end if need to, so doesn't block generation in multi-generator case
     if extra_dict.get('ntokens') is None:
@@ -262,8 +262,21 @@ def _save_generate_output(prompt=None, output=None, base_model=None, save_dir=No
         # only do below if didn't already compute ntokens, else assume also computed rate
         extra_dict['tokens_persecond'] = extra_dict['ntokens'] / extra_dict['t_generate']
 
-    dict_to_save = dict(prompt=prompt, text=output, time=time.ctime(), base_model=base_model, where_from=where_from)
+    dict_to_save = dict(prompt=prompt, text=output, time=time.ctime(),
+                        base_model=base_model,
+                        where_from=where_from,
+                        error=error,
+                        extra=extra,
+                        )
     dict_to_save.update(extra_dict)
+
+    if return_dict:
+        return dict_to_save
+
+    if os.path.exists(save_dir) and not os.path.isdir(save_dir):
+        raise RuntimeError("save_dir already exists and is not a directory!")
+    makedirs(save_dir, exist_ok=True)  # already should be made, can't change at this point
+    import json
     with filelock.FileLock("save_dir.lock"):
         # lock logging in case have concurrency
         with open(os.path.join(save_dir, "history.json"), "a") as f:
@@ -517,9 +530,19 @@ def atomic_move_simple(src, dst):
     remove(src)
 
 
-def download_simple(url, dest=None, print_func=None):
-    if print_func is not None:
-        print_func("BEGIN get url %s" % str(url))
+def download_simple(url, dest=None):
+    if dest is None:
+        dest = os.path.basename(url)
+    base_path = os.path.dirname(dest)
+    if base_path:  # else local path
+        base_path = makedirs(base_path, exist_ok=True, tmp_ok=True, use_base=True)
+        dest = os.path.join(base_path, os.path.basename(dest))
+
+    if os.path.isfile(dest):
+        print("Already have %s from url %s, delete file if invalid" % (dest, str(url)), flush=True)
+        return dest
+
+    print("BEGIN get url %s" % str(url), flush=True)
     if url.startswith("file://"):
         from requests_file import FileAdapter
         s = requests.Session()
@@ -527,8 +550,8 @@ def download_simple(url, dest=None, print_func=None):
         url_data = s.get(url, stream=True)
     else:
         url_data = requests.get(url, stream=True)
-    if dest is None:
-        dest = os.path.basename(url)
+    print("GOT url %s" % str(url), flush=True)
+
     if url_data.status_code != requests.codes.ok:
         msg = "Cannot get url %s, code: %s, reason: %s" % (
             str(url),
@@ -537,16 +560,14 @@ def download_simple(url, dest=None, print_func=None):
         )
         raise requests.exceptions.RequestException(msg)
     url_data.raw.decode_content = True
-    base_path = os.path.dirname(dest)
-    base_path = makedirs(base_path, exist_ok=True, tmp_ok=True, use_base=True)
-    dest = os.path.join(base_path, os.path.basename(dest))
+
     uuid_tmp = str(uuid.uuid4())[:6]
     dest_tmp = dest + "_dl_" + uuid_tmp + ".tmp"
     with open(dest_tmp, "wb") as f:
         shutil.copyfileobj(url_data.raw, f)
     atomic_move_simple(dest_tmp, dest)
-    if print_func is not None:
-        print_func("END get url %s" % str(url))
+    print("DONE url %s" % str(url), flush=True)
+    return dest
 
 
 def download(url, dest=None, dest_path=None):
@@ -595,7 +616,21 @@ def download(url, dest=None, dest_path=None):
     return dest
 
 
-def get_url(x, from_str=False, short_name=False):
+def get_doc(x):
+    return x.page_content
+
+
+def get_source(x):
+    return x.metadata.get('source', "UNKNOWN SOURCE")
+
+
+def get_accordion(x, font_size=2, head_acc=50):
+    title = x.page_content[:head_acc].replace("\n", ' ').replace("<br>", ' ').replace("<p>", ' ').replace("\r", ' ')
+    content = x.page_content
+    return f"""<details><summary><font size="{font_size}">{title}</font></summary><font size="{font_size}">{content}</font></details>"""
+
+
+def get_url(x, from_str=False, short_name=False, font_size=2):
     if not from_str:
         source = x.metadata['source']
     else:
@@ -605,11 +640,11 @@ def get_url(x, from_str=False, short_name=False):
     else:
         source_name = source
     if source.startswith('http://') or source.startswith('https://'):
-        return """<a href="%s" target="_blank"  rel="noopener noreferrer">%s</a>""" % (
-            source, source_name)
+        return """<font size="%s"><a href="%s" target="_blank"  rel="noopener noreferrer">%s</a></font>""" % (
+            font_size, source, source_name)
     else:
-        return """<a href="file/%s" target="_blank"  rel="noopener noreferrer">%s</a>""" % (
-            source, source_name)
+        return """<font size="%s"><a href="file/%s" target="_blank"  rel="noopener noreferrer">%s</a></font>""" % (
+            font_size, source, source_name)
 
 
 def get_short_name(name, maxl=50):
@@ -912,24 +947,24 @@ def get_kwargs(func, exclude_names=None, **kwargs):
     return kwargs
 
 
-import pkg_resources
+from importlib.metadata import distribution, PackageNotFoundError
 
 have_faiss = False
 
 try:
-    assert pkg_resources.get_distribution('faiss') is not None
+    assert distribution('faiss') is not None
     have_faiss = True
-except (pkg_resources.DistributionNotFound, AssertionError):
+except (PackageNotFoundError, AssertionError):
     pass
 try:
-    assert pkg_resources.get_distribution('faiss_gpu') is not None
+    assert distribution('faiss_gpu') is not None
     have_faiss = True
-except (pkg_resources.DistributionNotFound, AssertionError):
+except (PackageNotFoundError, AssertionError):
     pass
 try:
-    assert pkg_resources.get_distribution('faiss_cpu') is not None
+    assert distribution('faiss_cpu') is not None
     have_faiss = True
-except (pkg_resources.DistributionNotFound, AssertionError):
+except (PackageNotFoundError, AssertionError):
     pass
 
 
@@ -1030,56 +1065,62 @@ def get_local_ip():
 
 
 try:
-    assert pkg_resources.get_distribution('langchain') is not None
+    assert distribution('langchain') is not None
     have_langchain = True
-except (pkg_resources.DistributionNotFound, AssertionError):
+except (PackageNotFoundError, AssertionError):
     have_langchain = False
 
 import distutils.spawn
 
 have_tesseract = distutils.spawn.find_executable("tesseract")
 have_libreoffice = distutils.spawn.find_executable("libreoffice")
-
-import pkg_resources
+try:
+    from weasyprint import HTML
+    import doctr
+    have_doctr = True
+except:
+    have_doctr = False
 
 try:
-    assert pkg_resources.get_distribution('arxiv') is not None
-    assert pkg_resources.get_distribution('pymupdf') is not None
+    assert distribution('arxiv') is not None
+    assert distribution('pymupdf') is not None
     have_arxiv = True
-except (pkg_resources.DistributionNotFound, AssertionError):
+except (PackageNotFoundError, AssertionError):
     have_arxiv = False
 
 try:
-    assert pkg_resources.get_distribution('pymupdf') is not None
+    assert distribution('pymupdf') is not None
     have_pymupdf = True
-except (pkg_resources.DistributionNotFound, AssertionError):
+except (PackageNotFoundError, AssertionError):
     have_pymupdf = False
 
 try:
-    assert pkg_resources.get_distribution('selenium') is not None
+    assert distribution('selenium') is not None
     have_selenium = True
-except (pkg_resources.DistributionNotFound, AssertionError):
+except (PackageNotFoundError, AssertionError):
     have_selenium = False
 
 try:
-    assert pkg_resources.get_distribution('pillow') is not None
+    assert distribution('pillow') is not None
     have_pillow = True
-except (pkg_resources.DistributionNotFound, AssertionError):
+except (PackageNotFoundError, AssertionError):
     have_pillow = False
 
 try:
-    assert pkg_resources.get_distribution('playwright') is not None
+    assert distribution('playwright') is not None
     have_playwright = True
-except (pkg_resources.DistributionNotFound, AssertionError):
+except (PackageNotFoundError, AssertionError):
     have_playwright = False
 
+try:
+    assert distribution('jq') is not None
+    have_jq = True
+except (PackageNotFoundError, AssertionError):
+    have_jq = False
 
 only_unstructured_urls = os.environ.get("ONLY_UNSTRUCTURED_URLS", "0") == "1"
 only_selenium = os.environ.get("ONLY_SELENIUM", "0") == "1"
 only_playwright = os.environ.get("ONLY_PLAYWRIGHT", "0") == "1"
-if not only_playwright:
-    # disable, hangs too often
-    have_playwright = False
 
 
 def set_openai(inference_server):
@@ -1090,106 +1131,30 @@ def set_openai(inference_server):
         ip_vllm = inference_server.split(':')[1]
         port_vllm = inference_server.split(':')[2]
         openai_vllm.api_base = f"http://{ip_vllm}:{port_vllm}/v1"
-        return openai_vllm, inf_type
+        return openai_vllm, inf_type, None, None, None
     else:
         import openai
         openai.api_key = os.getenv("OPENAI_API_KEY")
         openai.api_base = os.environ.get("OPENAI_API_BASE", "https://api.openai.com/v1")
-        inf_type = inference_server
-        return openai, inf_type
 
+        base_url = None
+        deployment_type = None
+        api_version = None
+        inf_type = inference_server.split(':')[0]
+        if len(inference_server.split(':')) >= 2:
+            deployment_type = inference_server.split(':')[1]
+        if len(inference_server.split(':')) >= 3:
+            base_url = inference_server.split(':')[2]
+        if len(inference_server.split(':')) >= 4:
+            api_version = inference_server.split(':')[3]
 
-visible_langchain_modes_file = 'visible_langchain_modes.pkl'
-
-
-def save_collection_names(langchain_modes, visible_langchain_modes, langchain_mode_paths,
-                          LangChainMode, db1s,
-                          in_user_db, save_dir=None):
-    """
-    extra controls if UserData type of MyData type
-    """
-
-    # use first default MyData hash as general user hash to maintain file
-    # if user moves MyData from langchain modes, db will still survive, so can still use hash
-    scratch_collection_names = list(db1s.keys())
-    user_hash = db1s.get(LangChainMode.MY_DATA.value, '')[1]
-
-    llms = ['LLM', 'Disabled']
-
-    scratch_langchain_modes = [x for x in langchain_modes if x in scratch_collection_names]
-    scratch_visible_langchain_modes = [x for x in visible_langchain_modes if x in scratch_collection_names]
-    scratch_langchain_mode_paths = {k: v for k, v in langchain_mode_paths.items() if
-                                    k in scratch_collection_names and k not in llms}
-
-    user_langchain_modes = [x for x in langchain_modes if x not in scratch_collection_names]
-    user_visible_langchain_modes = [x for x in visible_langchain_modes if x not in scratch_collection_names]
-    user_langchain_mode_paths = {k: v for k, v in langchain_mode_paths.items() if
-                                 k not in scratch_collection_names and k not in llms}
-
-    if save_dir is not None:
-        base_path_file = save_dir
-    else:
-        base_path_file = './'
-    base_path = 'locks'
-    base_path = makedirs(base_path, tmp_ok=True, use_base=True)
-
-    if in_user_db:
-        # user
-        extra = ''
-    else:
-        # scratch
-        extra = user_hash
-
-    file = os.path.join(base_path_file, "%s%s" % (visible_langchain_modes_file, extra))
-    lock_file = os.path.join(base_path, "%s.lock" % file)
-    makedirs(os.path.dirname(lock_file), exist_ok=True)
-    if in_user_db:
-        # user
-        with filelock.FileLock(lock_file):
-            with open(file, 'wb') as f:
-                pickle.dump((user_langchain_modes, user_visible_langchain_modes, user_langchain_mode_paths), f)
-    else:
-        # scratch
-        with filelock.FileLock(lock_file):
-            with open(file, 'wb') as f:
-                pickle.dump((scratch_langchain_modes, scratch_visible_langchain_modes, scratch_langchain_mode_paths), f)
-
-
-def load_collection_enum(extra, save_dir=None):
-    """
-    extra controls if UserData type of MyData type
-    """
-    if save_dir is not None:
-        base_path_file = save_dir
-    else:
-        base_path_file = './'
-    base_path = 'locks'
-    base_path = makedirs(base_path, tmp_ok=True, use_base=True)
-
-    file = os.path.join(base_path_file, "%s%s" % (visible_langchain_modes_file, extra))
-    lock_file = os.path.join(base_path, "%s.lock" % file)
-    makedirs(os.path.dirname(lock_file), exist_ok=True)
-
-    langchain_modes_from_file = []
-    visible_langchain_modes_from_file = []
-    langchain_mode_paths_from_file = {}
-    if os.path.isfile(file):
-        try:
-            with filelock.FileLock(lock_file):
-                with open(file, 'rb') as f:
-                    langchain_modes_from_file, visible_langchain_modes_from_file, langchain_mode_paths_from_file = pickle.load(
-                        f)
-        except BaseException as e:
-            print("Cannot load %s, ignoring error: %s" % (file, str(e)), flush=True)
-    for k, v in langchain_mode_paths_from_file.items():
-        if v is not None and not os.path.isdir(v) and isinstance(v, str):
-            # assume was deleted, but need to make again to avoid extra code elsewhere
-            langchain_mode_paths_from_file[k] = makedirs(v, use_base=True)
-    return langchain_modes_from_file, visible_langchain_modes_from_file, langchain_mode_paths_from_file
-
-
-def remove_collection_enum():
-    remove(visible_langchain_modes_file)
+        if deployment_type == 'None':
+            deployment_type = None
+        if base_url == 'None':
+            base_url = None
+        if base_url == 'None':
+            base_url = None
+        return openai, inf_type, deployment_type, base_url, api_version
 
 
 def get_list_or_str(x):
@@ -1217,3 +1182,101 @@ def deepcopy_by_pickle_object(object):
     new_object = pickle.loads(pickle.dumps(object, -1))
     gc.enable()
     return new_object
+
+
+def url_alive(url):
+    try:
+        response = requests.head(url)
+    except Exception as e:
+        return False
+    else:
+        if response.status_code in [200, 301, 302]:
+            return True
+        else:
+            return False
+
+
+def dict_to_html(x, small=True):
+    df = pd.DataFrame(x.items(), columns=['Key', 'Value'])
+    df.index = df.index + 1
+    df.index.name = 'index'
+    res = tabulate.tabulate(df, headers='keys', tablefmt='unsafehtml')
+    if small:
+        return "<small>" + res + "</small>"
+    else:
+        return res
+
+
+def text_to_html(x):
+    return """
+<style>
+      pre {
+        overflow-x: auto;
+        white-space: pre-wrap;
+        white-space: -moz-pre-wrap;
+        white-space: -pre-wrap;
+        white-space: -o-pre-wrap;
+        word-wrap: break-word;
+      }
+    </style>
+<pre>
+%s
+</pre>
+""" % x
+
+
+def lg_to_gr(
+        **kwargs,
+):
+    # translate:
+    import torch
+    n_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    n_gpus, gpu_ids = cuda_vis_check(n_gpus)
+    if n_gpus != 0:
+        image_loaders_options = ['Caption', 'CaptionBlip2']
+    else:
+        image_loaders_options = ['Caption']
+    if have_tesseract:
+        image_loaders_options.append('OCR')
+    if have_doctr:
+        image_loaders_options.append('DocTR')
+    image_loaders_options0 = []
+    if have_tesseract and kwargs['enable_ocr']:
+        image_loaders_options0.append('OCR')
+    if have_doctr and kwargs['enable_doctr']:
+        image_loaders_options0.append('DocTR')
+    if kwargs['enable_captions']:
+        if kwargs['max_quality'] and n_gpus > 0:
+            # BLIP2 only on GPU
+            image_loaders_options0.append('CaptionBlip2')
+        else:
+            image_loaders_options0.append('Caption')
+    assert len(set(image_loaders_options0).difference(image_loaders_options)) == 0
+
+    pdf_loaders_options = ['PyMuPDF', 'Unstructured', 'PyPDF', 'TryHTML']
+    if have_tesseract:
+        pdf_loaders_options.append('OCR')
+    pdf_loaders_options0 = ['PyMuPDF']
+    assert len(set(pdf_loaders_options0).difference(pdf_loaders_options)) == 0
+    if kwargs['enable_pdf_ocr'] == 'on':
+        pdf_loaders_options0.append('OCR')
+
+    url_loaders_options = []
+    if only_unstructured_urls:
+        url_loaders_options.append('Unstructured')
+    elif have_selenium and only_selenium:
+        url_loaders_options.append('Selenium')
+    elif have_playwright and only_playwright:
+        url_loaders_options.append('PlayWright')
+    else:
+        url_loaders_options.append('Unstructured')
+        if have_selenium:
+            url_loaders_options.append('Selenium')
+        if have_playwright:
+            url_loaders_options.append('PlayWright')
+    url_loaders_options0 = [url_loaders_options[0]]
+    assert len(set(url_loaders_options0).difference(url_loaders_options)) == 0
+
+    return image_loaders_options0, image_loaders_options, \
+        pdf_loaders_options0, pdf_loaders_options, \
+        url_loaders_options0, url_loaders_options

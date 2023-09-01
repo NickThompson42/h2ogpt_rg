@@ -11,12 +11,11 @@ import shutil
 import sys
 import time
 import traceback
-import typing
 import uuid
 import filelock
+import numpy as np
 import pandas as pd
 import requests
-import tabulate
 from iterators import TimeoutIterator
 
 from gradio_utils.css import get_css
@@ -51,18 +50,17 @@ def fix_pydantic_duplicate_validators_error():
 fix_pydantic_duplicate_validators_error()
 
 from enums import DocumentSubset, no_model_str, no_lora_str, no_server_str, LangChainAction, LangChainMode, \
-    DocumentChoice, langchain_modes_intrinsic
+    DocumentChoice, langchain_modes_intrinsic, LangChainTypes, langchain_modes_non_db, gr_to_lg
 from gradio_themes import H2oTheme, SoftTheme, get_h2o_title, get_simple_title, \
     get_dark_js, get_heap_js, wrap_js_to_lambda, \
     spacing_xsm, radius_xsm, text_xsm
 from prompter import prompt_type_to_model_name, prompt_types_strings, inv_prompt_type_to_model_lower, non_hf_types, \
     get_prompt
 from utils import flatten_list, zip_data, s3up, clear_torch_cache, get_torch_allocated, system_info_print, \
-    ping, get_short_name, makedirs, get_kwargs, remove, system_info, ping_gpu, get_url, get_local_ip, \
-    save_collection_names, save_generate_output
+    ping, makedirs, get_kwargs, system_info, ping_gpu, get_url, get_local_ip, \
+    save_generate_output, url_alive, remove, dict_to_html, text_to_html, lg_to_gr
 from gen import get_model, languages_covered, evaluate, score_qa, inputs_kwargs_list, \
-    get_max_max_new_tokens, get_minmax_top_k_docs, history_to_context, langchain_actions, langchain_agents_list, \
-    update_langchain
+    get_max_max_new_tokens, get_minmax_top_k_docs, history_to_context, langchain_actions, langchain_agents_list
 from evaluate_params import eval_func_param_names, no_default_param_names, eval_func_param_names_defaults, \
     input_args_list
 
@@ -111,24 +109,19 @@ def go_gradio(**kwargs):
     enable_text_upload = kwargs['enable_text_upload']
     use_openai_embedding = kwargs['use_openai_embedding']
     hf_embedding_model = kwargs['hf_embedding_model']
+    load_db_if_exists = kwargs['load_db_if_exists']
     migrate_embedding_model = kwargs['migrate_embedding_model']
-    enable_captions = kwargs['enable_captions']
     captions_model = kwargs['captions_model']
-    enable_ocr = kwargs['enable_ocr']
-    enable_pdf_ocr = kwargs['enable_pdf_ocr']
     caption_loader = kwargs['caption_loader']
 
     n_jobs = kwargs['n_jobs']
+    verbose = kwargs['verbose']
 
     # for dynamic state per user session in gradio
     model_state0 = kwargs['model_state0']
     score_model_state0 = kwargs['score_model_state0']
     my_db_state0 = kwargs['my_db_state0']
     selection_docs_state0 = kwargs['selection_docs_state0']
-    # for evaluate defaults
-    langchain_modes0 = kwargs['langchain_modes']
-    visible_langchain_modes0 = kwargs['visible_langchain_modes']
-    langchain_mode_paths0 = kwargs['langchain_mode_paths']
     # For Heap analytics
     is_heap_analytics_enabled = kwargs['enable_heap_analytics']
     heap_app_id = kwargs['heap_app_id']
@@ -155,10 +148,10 @@ def go_gradio(**kwargs):
 
     title = 'h2oGPT'
     if kwargs['visible_h2ogpt_header']:
-        description = """<iframe src="https://ghbtns.com/github-btn.html?user=h2oai&repo=h2ogpt&type=star&count=true&size=small" frameborder="0" scrolling="0" width="280" height="20" title="GitHub"></iframe><small><a href="https://github.com/h2oai/h2ogpt">h2oGPT</a> <a href="https://evalgpt.ai/">LLM Leaderboard</a>  <a href="https://github.com/h2oai/h2o-llmstudio">LLM Studio</a><br><a href="https://huggingface.co/h2oai">🤗 Models</a>"""
+        description = """<iframe src="https://ghbtns.com/github-btn.html?user=h2oai&repo=h2ogpt&type=star&count=true&size=small" frameborder="0" scrolling="0" width="280" height="20" title="GitHub"></iframe><small><a href="https://github.com/h2oai/h2ogpt">h2oGPT</a> <a href="https://evalgpt.ai/">LLM Leaderboard</a> <a href="https://github.com/h2oai/h2o-llmstudio">LLM Studio</a><br /><a href="https://codellama.h2o.ai">CodeLlama</a> <br /><a href="https://huggingface.co/h2oai">🤗 Models</a>"""
     else:
         description = None
-    description_bottom = "If this host is busy, try<br>[Multi-Model](https://gpt.h2o.ai)<br>[Llama2 70B](https://llama.h2o.ai)<br>[Falcon 40B](https://falcon.h2o.ai)<br>[HF Spaces1](https://huggingface.co/spaces/h2oai/h2ogpt-chatbot)<br>[HF Spaces2](https://huggingface.co/spaces/h2oai/h2ogpt-chatbot2)<br>"
+    description_bottom = "If this host is busy, try<br>[Multi-Model](https://gpt.h2o.ai)<br>[CodeLlama](https://codellama.h2o.ai)<br>[Llama2 70B](https://llama.h2o.ai)<br>[Falcon 40B](https://falcon.h2o.ai)<br>[HF Spaces1](https://huggingface.co/spaces/h2oai/h2ogpt-chatbot)<br>[HF Spaces2](https://huggingface.co/spaces/h2oai/h2ogpt-chatbot2)<br>"
     if is_hf:
         description_bottom += '''<a href="https://huggingface.co/spaces/h2oai/h2ogpt-chatbot?duplicate=true"><img src="https://bit.ly/3gLdBN6" style="white-space: nowrap" alt="Duplicate Space"></a>'''
     task_info_md = ''
@@ -208,9 +201,9 @@ def go_gradio(**kwargs):
 
     # always add in no lora case
     # add fake space so doesn't go away in gradio dropdown
-    model_options0 = [no_model_str] + model_options0
-    lora_options = [no_lora_str] + lora_options
-    server_options = [no_server_str] + server_options
+    model_options0 = [no_model_str] + sorted(model_options0)
+    lora_options = [no_lora_str] + sorted(lora_options)
+    server_options = [no_server_str] + sorted(server_options)
     # always add in no model case so can free memory
     # add fake space so doesn't go away in gradio dropdown
 
@@ -262,6 +255,170 @@ def go_gradio(**kwargs):
         # else gets input_list at time of submit that is old, and shows up as truncated in chatbot
         return x
 
+    def update_auth_selection(auth_user, selection_docs_state1, save=False):
+        # in-place update of both
+        if 'selection_docs_state' not in auth_user:
+            auth_user['selection_docs_state'] = selection_docs_state0
+        for k, v in auth_user['selection_docs_state'].items():
+            if isinstance(selection_docs_state1[k], dict):
+                if save:
+                    auth_user['selection_docs_state'][k].clear()
+                    auth_user['selection_docs_state'][k].update(selection_docs_state1[k])
+                else:
+                    selection_docs_state1[k].clear()
+                    selection_docs_state1[k].update(auth_user['selection_docs_state'][k])
+            elif isinstance(selection_docs_state1[k], list):
+                if save:
+                    auth_user['selection_docs_state'][k].clear()
+                    auth_user['selection_docs_state'][k].extend(selection_docs_state1[k])
+                else:
+                    selection_docs_state1[k].clear()
+                    selection_docs_state1[k].extend(auth_user['selection_docs_state'][k])
+            else:
+                raise RuntimeError("Bad type: %s" % selection_docs_state1[k])
+
+    # BEGIN AUTH THINGS
+    def auth_func(username1, password1, auth_pairs=None, auth_filename=None,
+                  auth_access=None,
+                  auth_freeze=None,
+                  guest_name=None,
+                  selection_docs_state1=None,
+                  selection_docs_state00=None,
+                  **kwargs):
+        assert auth_freeze is not None
+        if selection_docs_state1 is None:
+            selection_docs_state1 = selection_docs_state00
+        assert selection_docs_state1 is not None
+        assert auth_filename and isinstance(auth_filename, str), "Auth file must be a non-empty string, got: %s" % str(
+            auth_filename)
+        if auth_access == 'open' and username1 == guest_name:
+            return True
+        if username1 == '':
+            # some issue with login
+            return False
+        with filelock.FileLock(auth_filename + '.lock'):
+            auth_dict = {}
+            if os.path.isfile(auth_filename):
+                try:
+                    with open(auth_filename, 'rt') as f:
+                        auth_dict = json.load(f)
+                except json.decoder.JSONDecodeError as e:
+                    print("Auth exception: %s" % str(e), flush=True)
+                    shutil.move(auth_filename, auth_filename + '.bak' + str(uuid.uuid4()))
+                    auth_dict = {}
+            if username1 in auth_dict and username1 in auth_pairs:
+                if password1 == auth_dict[username1]['password'] and password1 == auth_pairs[username1]:
+                    auth_user = auth_dict[username1]
+                    update_auth_selection(auth_user, selection_docs_state1)
+                    save_auth_dict(auth_dict, auth_filename)
+                    return True
+                else:
+                    return False
+            elif username1 in auth_dict:
+                if password1 == auth_dict[username1]['password']:
+                    auth_user = auth_dict[username1]
+                    update_auth_selection(auth_user, selection_docs_state1)
+                    save_auth_dict(auth_dict, auth_filename)
+                    return True
+                else:
+                    return False
+            elif username1 in auth_pairs:
+                # copy over CLI auth to file so only one state to manage
+                auth_dict[username1] = dict(password=auth_pairs[username1], userid=str(uuid.uuid4()))
+                auth_user = auth_dict[username1]
+                update_auth_selection(auth_user, selection_docs_state1)
+                save_auth_dict(auth_dict, auth_filename)
+                return True
+            else:
+                if auth_access == 'closed':
+                    return False
+                # open access
+                auth_dict[username1] = dict(password=password1, userid=str(uuid.uuid4()))
+                auth_user = auth_dict[username1]
+                update_auth_selection(auth_user, selection_docs_state1)
+                save_auth_dict(auth_dict, auth_filename)
+                if auth_access == 'open':
+                    return True
+                else:
+                    raise RuntimeError("Invalid auth_access: %s" % auth_access)
+
+    def auth_func_open(*args, **kwargs):
+        return True
+
+    def get_username(requests_state1):
+        username1 = None
+        if 'username' in requests_state1:
+            username1 = requests_state1['username']
+        return username1
+
+    def get_userid_auth_func(requests_state1, auth_filename=None, auth_access=None, guest_name=None, **kwargs):
+        if auth_filename and isinstance(auth_filename, str):
+            username1 = get_username(requests_state1)
+            if username1:
+                if username1 == guest_name:
+                    return str(uuid.uuid4())
+                with filelock.FileLock(auth_filename + '.lock'):
+                    if os.path.isfile(auth_filename):
+                        with open(auth_filename, 'rt') as f:
+                            auth_dict = json.load(f)
+                        if username1 in auth_dict:
+                            return auth_dict[username1]['userid']
+        # if here, then not persistently associated with username1,
+        # but should only be one-time asked if going to persist within a single session!
+        return str(uuid.uuid4())
+
+    get_userid_auth = functools.partial(get_userid_auth_func,
+                                        auth_filename=kwargs['auth_filename'],
+                                        auth_access=kwargs['auth_access'],
+                                        guest_name=kwargs['guest_name'],
+                                        )
+    if kwargs['auth_access'] == 'closed':
+        auth_message1 = "Closed access"
+    else:
+        auth_message1 = "WELCOME!  Open access" \
+                        " (%s/%s or any unique user/pass)" % (kwargs['guest_name'], kwargs['guest_name'])
+
+    if kwargs['auth_message'] is not None:
+        auth_message = kwargs['auth_message']
+    else:
+        auth_message = auth_message1
+
+    # always use same callable
+    auth_pairs0 = {}
+    if isinstance(kwargs['auth'], list):
+        for k, v in kwargs['auth']:
+            auth_pairs0[k] = v
+    authf = functools.partial(auth_func,
+                              auth_pairs=auth_pairs0,
+                              auth_filename=kwargs['auth_filename'],
+                              auth_access=kwargs['auth_access'],
+                              auth_freeze=kwargs['auth_freeze'],
+                              guest_name=kwargs['guest_name'],
+                              selection_docs_state00=copy.deepcopy(selection_docs_state0))
+
+    def get_request_state(request):
+        # if need to get state, do it now
+        requests_state1 = requests_state0
+        if requests:
+            if hasattr(request, 'headers'):
+                requests_state1.update(request.headers)
+            if hasattr(request, 'host'):
+                requests_state1.update(dict(host2=request.client.host))
+            if hasattr(request, 'username'):
+                requests_state1.update(dict(username=request.username or str(uuid.uuid4())))
+        requests_state1 = {str(k): str(v) for k, v in requests_state1.items()}
+        return requests_state1
+
+    def user_state_setup(db1s, requests_state1, request: gr.Request, *args):
+        if not requests_state1['username']:  # should at least be "None" or actual username
+            requests_state1 = get_request_state(request)
+        from src.gpt_langchain import set_userid
+        set_userid(db1s, requests_state1, get_userid_auth)
+        args_list = [db1s, requests_state1] + list(args)
+        return tuple(args_list)
+
+    # END AUTH THINGS
+
     def allow_empty_instruction(langchain_mode1, document_subset1, langchain_action1):
         allow = False
         allow |= langchain_action1 not in LangChainAction.QUERY.value
@@ -269,6 +426,11 @@ def go_gradio(**kwargs):
         if langchain_mode1 in [LangChainMode.LLM.value]:
             allow = False
         return allow
+
+    image_loaders_options0, image_loaders_options, \
+        pdf_loaders_options0, pdf_loaders_options, \
+        url_loaders_options0, url_loaders_options = lg_to_gr(**kwargs)
+    jq_schema0 = '.[]'
 
     with demo:
         # avoid actual model/tokenizer here or anything that would be bad to deepcopy
@@ -284,13 +446,15 @@ def go_gradio(**kwargs):
                  )
         )
 
-        def update_langchain_mode_paths(db1s, selection_docs_state1):
-            if allow_upload_to_my_data:
-                selection_docs_state1['langchain_mode_paths'].update({k: None for k in db1s})
+        def update_langchain_mode_paths(selection_docs_state1):
             dup = selection_docs_state1['langchain_mode_paths'].copy()
             for k, v in dup.items():
-                if k not in selection_docs_state1['visible_langchain_modes']:
+                if k not in selection_docs_state1['langchain_modes']:
                     selection_docs_state1['langchain_mode_paths'].pop(k)
+            for k in selection_docs_state1['langchain_modes']:
+                if k not in selection_docs_state1['langchain_mode_types']:
+                    # if didn't specify shared, then assume scratch if didn't login or personal if logged in
+                    selection_docs_state1['langchain_mode_types'][k] = LangChainTypes.PERSONAL.value
             return selection_docs_state1
 
         # Setup some gradio states for per-user dynamic state
@@ -306,7 +470,7 @@ def go_gradio(**kwargs):
         docs_state = gr.State(docs_state0)
         viewable_docs_state0 = []
         viewable_docs_state = gr.State(viewable_docs_state0)
-        selection_docs_state0 = update_langchain_mode_paths(my_db_state0, selection_docs_state0)
+        selection_docs_state0 = update_langchain_mode_paths(selection_docs_state0)
         selection_docs_state = gr.State(selection_docs_state0)
         requests_state0 = dict(headers='', host='', username='')
         requests_state = gr.State(requests_state0)
@@ -337,14 +501,13 @@ def go_gradio(**kwargs):
 
         def get_langchain_choices(selection_docs_state1):
             langchain_modes = selection_docs_state1['langchain_modes']
-            visible_langchain_modes = selection_docs_state1['visible_langchain_modes']
 
             if is_hf:
                 # don't show 'wiki' since only usually useful for internal testing at moment
                 no_show_modes = ['Disabled', 'wiki']
             else:
                 no_show_modes = ['Disabled']
-            allowed_modes = visible_langchain_modes.copy()
+            allowed_modes = langchain_modes.copy()
             # allowed_modes = [x for x in allowed_modes if x in dbs]
             allowed_modes += ['LLM']
             if allow_upload_to_my_data and 'MyData' not in allowed_modes:
@@ -355,10 +518,52 @@ def go_gradio(**kwargs):
             return choices
 
         def get_df_langchain_mode_paths(selection_docs_state1):
+            langchain_choices1 = get_langchain_choices(selection_docs_state1)
             langchain_mode_paths = selection_docs_state1['langchain_mode_paths']
+            langchain_mode_paths = {k: v for k, v in langchain_mode_paths.items() if k in langchain_choices1}
             if langchain_mode_paths:
-                df = pd.DataFrame.from_dict(langchain_mode_paths.items(), orient='columns')
-                df.columns = ['Collection', 'Path']
+                langchain_mode_paths = langchain_mode_paths.copy()
+                for langchain_mode1 in langchain_modes_non_db:
+                    langchain_mode_paths.pop(langchain_mode1, None)
+                df1 = pd.DataFrame.from_dict(langchain_mode_paths.items(), orient='columns')
+                df1.columns = ['Collection', 'Path']
+                df1 = df1.set_index('Collection')
+            else:
+                df1 = pd.DataFrame(None)
+            langchain_mode_types = selection_docs_state1['langchain_mode_types']
+            langchain_mode_types = {k: v for k, v in langchain_mode_types.items() if k in langchain_choices1}
+            if langchain_mode_types:
+                langchain_mode_types = langchain_mode_types.copy()
+                for langchain_mode1 in langchain_modes_non_db:
+                    langchain_mode_types.pop(langchain_mode1, None)
+
+                df2 = pd.DataFrame.from_dict(langchain_mode_types.items(), orient='columns')
+                df2.columns = ['Collection', 'Type']
+                df2 = df2.set_index('Collection')
+
+                from src.gpt_langchain import get_persist_directory
+                persist_directory_dict = {}
+                for langchain_mode3 in langchain_mode_types:
+                    langchain_type3 = langchain_mode_types.get(langchain_mode3, LangChainTypes.EITHER.value)
+                    persist_directory3, langchain_type3 = get_persist_directory(langchain_mode3,
+                                                                                langchain_type=langchain_type3)
+                    persist_directory_dict[langchain_mode3] = persist_directory3
+
+                df3 = pd.DataFrame.from_dict(persist_directory_dict.items(), orient='columns')
+                df3.columns = ['Collection', 'Directory']
+                df3 = df3.set_index('Collection')
+            else:
+                df2 = pd.DataFrame(None)
+                df3 = pd.DataFrame(None)
+            if df1.shape[1] > 0 and df2.shape[1] > 0 and df2.shape[1] > 0:
+                df_tmp = df2.join(df1, on='Collection').replace(np.nan, '')
+                df = df_tmp.join(df3, on='Collection').replace(np.nan, '')
+                df = df.reset_index()
+            elif df2.shape[1] > 0 and df2.shape[1] > 0:
+                df = df2.join(df3, on='Collection').replace(np.nan, '')
+                df = df.reset_index()
+            elif df1.shape[1] > 0:
+                df = df1.reset_index()
             else:
                 df = pd.DataFrame(None)
             return df
@@ -378,12 +583,16 @@ def go_gradio(**kwargs):
                             file_types_str = '[' + ' '.join(file_types) + ' URL ArXiv TEXT' + ']'
                             fileup_output = gr.File(label=f'Upload {file_types_str}',
                                                     show_label=False,
-                                                    file_types=file_types,
+                                                    file_types=['.' + x for x in file_types],
+                                                    # file_types=['*', '*.*'],  # for iPhone etc. needs to be unconstrained else doesn't work with extension-based restrictions
                                                     file_count="multiple",
                                                     scale=1,
                                                     min_width=0,
-                                                    elem_id="warning", elem_classes="feedback")
+                                                    elem_id="warning", elem_classes="feedback",
+                                                    )
                             fileup_output_text = gr.Textbox(visible=False)
+                    max_quality = gr.Checkbox(label="Maximum Ingest Quality", value=kwargs['max_quality'],
+                                              visible=not is_public)
                     url_visible = kwargs['langchain_mode'] != 'Disabled' and allow_upload and enable_url_upload
                     url_label = 'URL/ArXiv' if have_arxiv else 'URL'
                     url_text = gr.Textbox(label=url_label,
@@ -451,6 +660,7 @@ def go_gradio(**kwargs):
                         )
                         iinput_nochat = gr.Textbox(lines=4, label="Input context for Instruction",
                                                    placeholder=kwargs['placeholder_input'],
+                                                   value=kwargs['iinput'],
                                                    visible=not kwargs['chat'])
                         submit_nochat = gr.Button("Submit", size='sm', visible=not kwargs['chat'])
                         flag_btn_nochat = gr.Button("Flag", size='sm', visible=not kwargs['chat'])
@@ -514,8 +724,14 @@ def go_gradio(**kwargs):
                         with gr.Column(scale=1):
                             get_sources_btn = gr.Button(value="Update UI with Document(s) from DB", scale=0, size='sm',
                                                         visible=sources_visible)
+                            # handle API get sources
+                            get_sources_api_btn = gr.Button(visible=False)
+                            get_sources_api_text = gr.Textbox(visible=False)
+
                             show_sources_btn = gr.Button(value="Show Sources from DB", scale=0, size='sm',
                                                          visible=sources_visible)
+                            delete_sources_btn = gr.Button(value="Delete Selected Sources from DB", scale=0, size='sm',
+                                                           visible=sources_visible)
                             refresh_sources_btn = gr.Button(value="Update DB with new/changed files on disk", scale=0,
                                                             size='sm',
                                                             visible=sources_visible and allow_upload_to_user_data)
@@ -526,29 +742,31 @@ def go_gradio(**kwargs):
                             visible_add_remove_collection = (allow_upload_to_user_data or
                                                              allow_upload_to_my_data) and \
                                                             kwargs['langchain_mode'] != 'Disabled'
-                            add_placeholder = "e.g. UserData2, user_path2 (optional)" \
-                                if not is_public else "e.g. MyData2"
+                            add_placeholder = "e.g. UserData2, shared, user_path2" \
+                                if not is_public else "e.g. MyData2, personal (optional)"
                             remove_placeholder = "e.g. UserData2" if not is_public else "e.g. MyData2"
                             new_langchain_mode_text = gr.Textbox(value="", visible=visible_add_remove_collection,
                                                                  label='Add Collection',
                                                                  placeholder=add_placeholder,
                                                                  interactive=True)
                             remove_langchain_mode_text = gr.Textbox(value="", visible=visible_add_remove_collection,
-                                                                    label='Remove Collection',
+                                                                    label='Remove Collection from UI',
                                                                     placeholder=remove_placeholder,
                                                                     interactive=True)
-                            load_langchain = gr.Button(value="Load LangChain State", scale=0, size='sm',
+                            purge_langchain_mode_text = gr.Textbox(value="", visible=visible_add_remove_collection,
+                                                                   label='Purge Collection (UI, DB, & source files)',
+                                                                   placeholder=remove_placeholder,
+                                                                   interactive=True)
+                            load_langchain = gr.Button(value="Load Collections State", scale=0, size='sm',
                                                        visible=allow_upload_to_user_data and
                                                                kwargs['langchain_mode'] != 'Disabled')
-                        with gr.Column(scale=1):
+                        with gr.Column(scale=5):
                             df0 = get_df_langchain_mode_paths(selection_docs_state0)
                             langchain_mode_path_text = gr.Dataframe(value=df0,
                                                                     visible=visible_add_remove_collection,
                                                                     label='LangChain Mode-Path',
                                                                     show_label=False,
                                                                     interactive=False)
-                        with gr.Column(scale=4):
-                            pass
 
                     sources_row = gr.Row(visible=kwargs['langchain_mode'] != 'Disabled' and enable_sources_list,
                                          equal_height=False)
@@ -577,13 +795,19 @@ def go_gradio(**kwargs):
                                                                multiselect=False,
                                                                visible=True,
                                                                )
+                            info_view_raw = "Raw text shown if render of original doc fails"
+                            if is_public:
+                                info_view_raw += " (Up to %s chunks in public portal)" % kwargs['max_raw_chunks']
+                            view_raw_text_checkbox = gr.Checkbox(label="View Database Text", value=False,
+                                                                 info=info_view_raw,
+                                                                 visible=kwargs['db_type'] == 'chroma')
                         with gr.Column(scale=4):
                             pass
-                    document = 'http://infolab.stanford.edu/pub/papers/google.pdf'
                     doc_view = gr.HTML(visible=False)
                     doc_view2 = gr.Dataframe(visible=False)
                     doc_view3 = gr.JSON(visible=False)
                     doc_view4 = gr.Markdown(visible=False)
+                    doc_view5 = gr.HTML(visible=False)
 
                 chat_tab = gr.TabItem("Chat History") \
                     if kwargs['visible_chat_history_tab'] else gr.Row(visible=False)
@@ -628,27 +852,45 @@ def go_gradio(**kwargs):
                                                        interactive=not is_public)
                             context = gr.Textbox(lines=2, label="System Pre-Context",
                                                  info="Directly pre-appended without prompt processing",
-                                                 interactive=not is_public)
+                                                 value=kwargs['context'])
                             iinput = gr.Textbox(lines=2, label="Input for Instruct prompt types",
+                                                info="If given for document query, added after query",
+                                                value=kwargs['iinput'],
                                                 placeholder=kwargs['placeholder_input'],
                                                 interactive=not is_public)
-                        with gr.Column():
                             system_prompt = gr.Textbox(label="System Prompt",
                                                        info="If empty, uses prompt_type's system prompt,"
                                                             " else use this message.  Use space for actually empty.",
                                                        value=kwargs['system_prompt'])
+                        with gr.Column():
+                            pre_prompt_query = gr.Textbox(label="Query Pre-Prompt",
+                                                          info="Added before documents",
+                                                          value=kwargs['pre_prompt_query'] or '')
+                            prompt_query = gr.Textbox(label="Query Prompt",
+                                                      info="Added after documents",
+                                                      value=kwargs['prompt_query'] or '')
                             pre_prompt_summary = gr.Textbox(label="Summary Pre-Prompt",
-                                                            info="Empty means use internal defaults",
-                                                            value='')
-                            prompt_summary = gr.Textbox(label="Summary Prompt before text",
-                                                        info="Empty means use internal defaults",
-                                                        value='')
-                    with gr.Row():
+                                                            info="Added before documents",
+                                                            value=kwargs['pre_prompt_summary'] or '')
+                            prompt_summary = gr.Textbox(label="Summary Prompt",
+                                                        info="Added after documents (if query given, 'Focusing on {query}, ' is pre-appended)",
+                                                        value=kwargs['prompt_summary'] or '')
+                    with gr.Row(visible=not is_public):
+                        image_loaders = gr.CheckboxGroup(image_loaders_options,
+                                                         label="Force Image Reader",
+                                                         value=image_loaders_options0)
+                        pdf_loaders = gr.CheckboxGroup(pdf_loaders_options,
+                                                       label="Force PDF Reader",
+                                                       value=pdf_loaders_options0)
+                        url_loaders = gr.CheckboxGroup(url_loaders_options,
+                                                       label="Force URL Reader", value=url_loaders_options0)
+                        jq_schema = gr.Textbox(label="JSON jq_schema", value=jq_schema0)
+
                         min_top_k_docs, max_top_k_docs, label_top_k_docs = get_minmax_top_k_docs(is_public)
                         top_k_docs = gr.Slider(minimum=min_top_k_docs, maximum=max_top_k_docs, step=1,
                                                value=kwargs['top_k_docs'],
                                                label=label_top_k_docs,
-                                               info="For LangChain",
+                                               # info="For LangChain",
                                                visible=kwargs['langchain_mode'] != 'Disabled',
                                                interactive=not is_public)
                         chunk_size = gr.Number(value=kwargs['chunk_size'],
@@ -664,11 +906,15 @@ def go_gradio(**kwargs):
                                                        info="For LangChain",
                                                        visible=kwargs['langchain_mode'] != 'Disabled',
                                                        interactive=not is_public)
+                        embed = gr.components.Checkbox(value=True,
+                                                       label="Whether to embed text",
+                                                       info="For LangChain",
+                                                       visible=False)
                     with gr.Row():
                         stream_output = gr.components.Checkbox(label="Stream output",
                                                                value=kwargs['stream_output'])
                         do_sample = gr.Checkbox(label="Sample",
-                                                info="Enable sampler, required for use of temperature, top_p, top_k",
+                                                info="Enable sampler (required for use of temperature, top_p, top_k)",
                                                 value=kwargs['do_sample'])
                         max_time = gr.Slider(minimum=0, maximum=kwargs['max_max_time'], step=1,
                                              value=min(kwargs['max_max_time'],
@@ -677,7 +923,7 @@ def go_gradio(**kwargs):
                         temperature = gr.Slider(minimum=0.01, maximum=2,
                                                 value=kwargs['temperature'],
                                                 label="Temperature",
-                                                info="Lower is deterministic (but may lead to repeats), Higher more creative (but may lead to hallucinations)")
+                                                info="Lower is deterministic, higher more creative")
                         top_p = gr.Slider(minimum=1e-3, maximum=1.0 - 1e-3,
                                           value=kwargs['top_p'], label="Top p",
                                           info="Cumulative probability of tokens to sample from")
@@ -742,31 +988,85 @@ def go_gradio(**kwargs):
                     model_lock_msg = gr.Textbox(lines=1, label="Model Lock Notice",
                                                 placeholder="Started in model_lock mode, no model changes allowed.",
                                                 visible=bool(kwargs['model_lock']), interactive=False)
-                    load_msg = "Load-Unload Model/LORA [unload works if did not use --base_model]" if not is_public \
+                    load_msg = "Download/Load Model" if not is_public \
                         else "LOAD-UNLOAD DISABLED FOR HOSTED DEMO"
-                    load_msg2 = "Load-Unload Model/LORA 2 [unload works if did not use --base_model]" if not is_public \
-                        else "LOAD-UNLOAD DISABLED FOR HOSTED DEMO 2"
+                    if kwargs['base_model'] not in ['', None, no_model_str]:
+                        load_msg += '   [WARNING: Avoid --base_model on CLI for memory efficient Load-Unload]'
+                    load_msg2 = load_msg + "(Model 2)"
                     variant_load_msg = 'primary' if not is_public else 'secondary'
-                    compare_checkbox = gr.components.Checkbox(label="Compare Mode",
-                                                              value=kwargs['model_lock'],
-                                                              visible=not is_public and not kwargs['model_lock'])
                     with gr.Row():
                         n_gpus_list = [str(x) for x in list(range(-1, n_gpus))]
                         with gr.Column():
                             with gr.Row():
                                 with gr.Column(scale=20, visible=not kwargs['model_lock']):
-                                    model_choice = gr.Dropdown(model_options_state.value[0], label="Choose Model",
+                                    load_model_button = gr.Button(load_msg, variant=variant_load_msg, scale=0,
+                                                                  size='sm', interactive=not is_public)
+                                    model_choice = gr.Dropdown(model_options_state.value[0], label="Choose Base Model",
                                                                value=kwargs['base_model'])
                                     lora_choice = gr.Dropdown(lora_options_state.value[0], label="Choose LORA",
                                                               value=kwargs['lora_weights'], visible=kwargs['show_lora'])
                                     server_choice = gr.Dropdown(server_options_state.value[0], label="Choose Server",
                                                                 value=kwargs['inference_server'], visible=not is_public)
+                                    max_seq_len = gr.Number(value=kwargs['max_seq_len'] or 2048,
+                                                            minimum=128,
+                                                            maximum=2 ** 18,
+                                                            info="If standard LLaMa-2, choose up to 4096",
+                                                            label="max_seq_len")
+                                    rope_scaling = gr.Textbox(value=str(kwargs['rope_scaling'] or {}),
+                                                              label="rope_scaling")
+                                    row_llama = gr.Row(visible=kwargs['show_llama'] and kwargs['base_model'] == 'llama')
+                                    with row_llama:
+                                        model_path_llama = gr.Textbox(value=kwargs['llamacpp_dict']['model_path_llama'],
+                                                                      lines=4,
+                                                                      label="Choose LLaMa.cpp Model Path/URL (for Base Model: llama)",
+                                                                      visible=kwargs['show_llama'])
+                                        n_gpu_layers = gr.Number(value=kwargs['llamacpp_dict']['n_gpu_layers'],
+                                                                 minimum=0, maximum=100,
+                                                                 label="LLaMa.cpp Num. GPU Layers Offloaded",
+                                                                 visible=kwargs['show_llama'])
+                                        n_batch = gr.Number(value=kwargs['llamacpp_dict']['n_batch'],
+                                                            minimum=0, maximum=2048,
+                                                            label="LLaMa.cpp Batch Size",
+                                                            visible=kwargs['show_llama'])
+                                        n_gqa = gr.Number(value=kwargs['llamacpp_dict']['n_gqa'],
+                                                          minimum=0, maximum=32,
+                                                          label="LLaMa.cpp Num. Group Query Attention (8 for 70B LLaMa2)",
+                                                          visible=kwargs['show_llama'])
+                                        llamacpp_dict_more = gr.Textbox(value="{}",
+                                                                        lines=4,
+                                                                        label="Dict for other LLaMa.cpp/GPT4All options",
+                                                                        visible=kwargs['show_llama'])
+                                    row_gpt4all = gr.Row(
+                                        visible=kwargs['show_gpt4all'] and kwargs['base_model'] in ['gptj',
+                                                                                                    'gpt4all_llama'])
+                                    with row_gpt4all:
+                                        model_name_gptj = gr.Textbox(value=kwargs['llamacpp_dict']['model_name_gptj'],
+                                                                     label="Choose GPT4All GPTJ Model Path/URL (for Base Model: gptj)",
+                                                                     visible=kwargs['show_gpt4all'])
+                                        model_name_gpt4all_llama = gr.Textbox(
+                                            value=kwargs['llamacpp_dict']['model_name_gpt4all_llama'],
+                                            label="Choose GPT4All LLaMa Model Path/URL (for Base Model: gpt4all_llama)",
+                                            visible=kwargs['show_gpt4all'])
                                 with gr.Column(scale=1, visible=not kwargs['model_lock']):
-                                    load_model_button = gr.Button(load_msg, variant=variant_load_msg, scale=0,
-                                                                  size='sm', interactive=not is_public)
                                     model_load8bit_checkbox = gr.components.Checkbox(
                                         label="Load 8-bit [requires support]",
                                         value=kwargs['load_8bit'], interactive=not is_public)
+                                    model_load4bit_checkbox = gr.components.Checkbox(
+                                        label="Load 4-bit [requires support]",
+                                        value=kwargs['load_4bit'], interactive=not is_public)
+                                    model_low_bit_mode = gr.Slider(value=kwargs['low_bit_mode'],
+                                                                   minimum=0, maximum=4, step=1,
+                                                                   label="low_bit_mode")
+                                    model_load_gptq = gr.Textbox(label="gptq", value=kwargs['load_gptq'],
+                                                                 interactive=not is_public)
+                                    model_load_exllama_checkbox = gr.components.Checkbox(
+                                        label="Load load_exllama [requires support]",
+                                        value=kwargs['load_exllama'], interactive=not is_public)
+                                    model_safetensors_checkbox = gr.components.Checkbox(
+                                        label="Safetensors [requires support]",
+                                        value=kwargs['use_safetensors'], interactive=not is_public)
+                                    model_revision = gr.Textbox(label="revision", value=kwargs['revision'],
+                                                                interactive=not is_public)
                                     model_use_gpu_id_checkbox = gr.components.Checkbox(
                                         label="Choose Devices [If not Checked, use all GPUs]",
                                         value=kwargs['use_gpu_id'], interactive=not is_public,
@@ -790,6 +1090,8 @@ def go_gradio(**kwargs):
                         with col_model2:
                             with gr.Row():
                                 with gr.Column(scale=20, visible=not kwargs['model_lock']):
+                                    load_model_button2 = gr.Button(load_msg2, variant=variant_load_msg, scale=0,
+                                                                   size='sm', interactive=not is_public)
                                     model_choice2 = gr.Dropdown(model_options_state.value[0], label="Choose Model 2",
                                                                 value=no_model_str)
                                     lora_choice2 = gr.Dropdown(lora_options_state.value[0], label="Choose LORA 2",
@@ -798,40 +1100,103 @@ def go_gradio(**kwargs):
                                     server_choice2 = gr.Dropdown(server_options_state.value[0], label="Choose Server 2",
                                                                  value=no_server_str,
                                                                  visible=not is_public)
+                                    max_seq_len2 = gr.Number(value=kwargs['max_seq_len'] or 2048,
+                                                             minimum=128,
+                                                             maximum=2 ** 18,
+                                                             info="If standard LLaMa-2, choose up to 4096",
+                                                             label="max_seq_len Model 2")
+                                    rope_scaling2 = gr.Textbox(value=str(kwargs['rope_scaling'] or {}),
+                                                               label="rope_scaling Model 2")
+
+                                    row_llama2 = gr.Row(
+                                        visible=kwargs['show_llama'] and kwargs['base_model'] == 'llama')
+                                    with row_llama2:
+                                        model_path_llama2 = gr.Textbox(
+                                            value=kwargs['llamacpp_dict']['model_path_llama'],
+                                            label="Choose LLaMa.cpp Model 2 Path/URL (for Base Model: llama)",
+                                            lines=4,
+                                            visible=kwargs['show_llama'])
+                                        n_gpu_layers2 = gr.Number(value=kwargs['llamacpp_dict']['n_gpu_layers'],
+                                                                  minimum=0, maximum=100,
+                                                                  label="LLaMa.cpp Num. GPU 2 Layers Offloaded",
+                                                                  visible=kwargs['show_llama'])
+                                        n_batch2 = gr.Number(value=kwargs['llamacpp_dict']['n_batch'],
+                                                             minimum=0, maximum=2048,
+                                                             label="LLaMa.cpp Model 2 Batch Size",
+                                                             visible=kwargs['show_llama'])
+                                        n_gqa2 = gr.Number(value=kwargs['llamacpp_dict']['n_gqa'],
+                                                           minimum=0, maximum=32,
+                                                           label="LLaMa.cpp Model 2 Num. Group Query Attention (8 for 70B LLaMa2)",
+                                                           visible=kwargs['show_llama'])
+                                        llamacpp_dict_more2 = gr.Textbox(value="{}",
+                                                                         lines=4,
+                                                                         label="Model 2 Dict for other LLaMa.cpp/GPT4All options",
+                                                                         visible=kwargs['show_llama'])
+                                    row_gpt4all2 = gr.Row(
+                                        visible=kwargs['show_gpt4all'] and kwargs['base_model'] in ['gptj',
+                                                                                                    'gpt4all_llama'])
+                                    with row_gpt4all2:
+                                        model_name_gptj2 = gr.Textbox(value=kwargs['llamacpp_dict']['model_name_gptj'],
+                                                                      label="Choose GPT4All GPTJ Model 2 Path/URL (for Base Model: gptj)",
+                                                                      visible=kwargs['show_gpt4all'])
+                                        model_name_gpt4all_llama2 = gr.Textbox(
+                                            value=kwargs['llamacpp_dict']['model_name_gpt4all_llama'],
+                                            label="Choose GPT4All LLaMa Model 2 Path/URL (for Base Model: gpt4all_llama)",
+                                            visible=kwargs['show_gpt4all'])
+
                                 with gr.Column(scale=1, visible=not kwargs['model_lock']):
-                                    load_model_button2 = gr.Button(load_msg2, variant=variant_load_msg, scale=0,
-                                                                   size='sm', interactive=not is_public)
                                     model_load8bit_checkbox2 = gr.components.Checkbox(
-                                        label="Load 8-bit 2 [requires support]",
+                                        label="Load 8-bit (Model 2) [requires support]",
                                         value=kwargs['load_8bit'], interactive=not is_public)
+                                    model_load4bit_checkbox2 = gr.components.Checkbox(
+                                        label="Load 4-bit (Model 2) [requires support]",
+                                        value=kwargs['load_4bit'], interactive=not is_public)
+                                    model_low_bit_mode2 = gr.Slider(value=kwargs['low_bit_mode'],
+                                                                    # ok that same as Model 1
+                                                                    minimum=0, maximum=4, step=1,
+                                                                    label="low_bit_mode (Model 2)")
+                                    model_load_gptq2 = gr.Textbox(label="gptq (Model 2)", value='',
+                                                                  interactive=not is_public)
+                                    model_load_exllama_checkbox2 = gr.components.Checkbox(
+                                        label="Load load_exllama (Model 2) [requires support]",
+                                        value=False, interactive=not is_public)
+                                    model_safetensors_checkbox2 = gr.components.Checkbox(
+                                        label="Safetensors (Model 2) [requires support]",
+                                        value=False, interactive=not is_public)
+                                    model_revision2 = gr.Textbox(label="revision (Model 2)", value='',
+                                                                 interactive=not is_public)
                                     model_use_gpu_id_checkbox2 = gr.components.Checkbox(
-                                        label="Choose Devices 2 [If not Checked, use all GPUs]",
+                                        label="Choose Devices (Model 2) [If not Checked, use all GPUs]",
                                         value=kwargs[
                                             'use_gpu_id'], interactive=not is_public)
                                     model_gpu2 = gr.Dropdown(n_gpus_list,
-                                                             label="GPU ID 2 [-1 = all GPUs, if choose is enabled]",
+                                                             label="GPU ID (Model 2) [-1 = all GPUs, if choose is enabled]",
                                                              value=kwargs['gpu_id'], interactive=not is_public)
                                     # no model/lora loaded ever in model2 by default
                                     model_used2 = gr.Textbox(label="Current Model 2", value=no_model_str,
                                                              interactive=False)
-                                    lora_used2 = gr.Textbox(label="Current LORA 2", value=no_lora_str,
+                                    lora_used2 = gr.Textbox(label="Current LORA (Model 2)", value=no_lora_str,
                                                             visible=kwargs['show_lora'], interactive=False)
-                                    server_used2 = gr.Textbox(label="Current Server 2", value=no_server_str,
+                                    server_used2 = gr.Textbox(label="Current Server (Model 2)", value=no_server_str,
                                                               interactive=False,
                                                               visible=not is_public)
-                                    prompt_dict2 = gr.Textbox(label="Prompt (or Custom) 2",
+                                    prompt_dict2 = gr.Textbox(label="Prompt (or Custom) (Model 2)",
                                                               value=pprint.pformat(kwargs['prompt_dict'], indent=4),
                                                               interactive=not is_public, lines=4)
+                    compare_checkbox = gr.components.Checkbox(label="Compare Two Models",
+                                                              value=kwargs['model_lock'],
+                                                              visible=not is_public and not kwargs['model_lock'])
                     with gr.Row(visible=not kwargs['model_lock']):
                         with gr.Column(scale=50):
-                            new_model = gr.Textbox(label="New Model name/path", interactive=not is_public)
+                            new_model = gr.Textbox(label="New Model name/path/URL", interactive=not is_public)
                         with gr.Column(scale=50):
-                            new_lora = gr.Textbox(label="New LORA name/path", visible=kwargs['show_lora'],
+                            new_lora = gr.Textbox(label="New LORA name/path/URL", visible=kwargs['show_lora'],
                                                   interactive=not is_public)
                         with gr.Column(scale=50):
                             new_server = gr.Textbox(label="New Server url:port", interactive=not is_public)
                         with gr.Row():
                             add_model_lora_server_button = gr.Button("Add new Model, Lora, Server url:port", scale=0,
+                                                                     variant=variant_load_msg,
                                                                      size='sm', interactive=not is_public)
                 system_tab = gr.TabItem("System") \
                     if kwargs['visible_system_tab'] else gr.Row(visible=False)
@@ -853,7 +1218,8 @@ def go_gradio(**kwargs):
                     admin_row = gr.Row()
                     with admin_row:
                         with gr.Column(scale=1):
-                            admin_pass_textbox = gr.Textbox(label="Admin Password", type='password',
+                            admin_pass_textbox = gr.Textbox(label="Admin Password",
+                                                            type='password',
                                                             visible=not system_visible0)
                         with gr.Column(scale=4):
                             pass
@@ -895,6 +1261,16 @@ def go_gradio(**kwargs):
                     description += """<i><li>By using h2oGPT, you accept our <a href="https://github.com/h2oai/h2ogpt/blob/main/docs/tos.md">Terms of Service</a></i></li></ul></p>"""
                     gr.Markdown(value=description, show_label=False, interactive=False)
 
+                login_tab = gr.TabItem("Login") \
+                    if kwargs['visible_login_tab'] else gr.Row(visible=False)
+                with login_tab:
+                    username_text = gr.Textbox(label="Username")
+                    password_text = gr.Textbox(label="Password", type='password', visible=True)
+                    login_msg = "Login (pick unique user/pass to persist your state)" if kwargs[
+                                                                                             'auth_access'] == 'open' else "Login (closed access)"
+                    login_btn = gr.Button(value=login_msg)
+                    login_result_text = gr.Text(label="Login Result", interactive=False)
+
                 hosts_tab = gr.TabItem("Hosts") \
                     if kwargs['visible_hosts_tab'] else gr.Row(visible=False)
                 with hosts_tab:
@@ -913,52 +1289,77 @@ def go_gradio(**kwargs):
         def clear_file_list():
             return None
 
-        def make_non_interactive(*args):
-            if len(args) == 1:
-                return gr.update(interactive=False)
+        def set_loaders(max_quality1,
+                        image_loaders_options1=None,
+                        pdf_loaders_options1=None,
+                        url_loaders_options1=None,
+                        image_loaders_options01=None,
+                        pdf_loaders_options01=None,
+                        url_loaders_options01=None,
+                        ):
+            if not max_quality1:
+                return image_loaders_options01, pdf_loaders_options01, url_loaders_options01
             else:
-                return tuple([gr.update(interactive=False)] * len(args))
+                return image_loaders_options1, pdf_loaders_options1, url_loaders_options1
 
-        def make_interactive(*args):
-            if len(args) == 1:
-                return gr.update(interactive=True)
-            else:
-                return tuple([gr.update(interactive=True)] * len(args))
+        set_loaders_func = functools.partial(set_loaders,
+                                             image_loaders_options1=image_loaders_options,
+                                             pdf_loaders_options1=pdf_loaders_options,
+                                             url_loaders_options1=url_loaders_options,
+                                             image_loaders_options01=image_loaders_options0,
+                                             pdf_loaders_options01=pdf_loaders_options0,
+                                             url_loaders_options01=url_loaders_options0,
+                                             )
+
+        max_quality.change(fn=set_loaders_func,
+                           inputs=max_quality,
+                           outputs=[image_loaders, pdf_loaders, url_loaders])
 
         # Add to UserData or custom user db
-        update_db_func = functools.partial(update_user_db,
+        update_db_func = functools.partial(update_user_db_gr,
                                            dbs=dbs,
                                            db_type=db_type,
                                            use_openai_embedding=use_openai_embedding,
                                            hf_embedding_model=hf_embedding_model,
                                            migrate_embedding_model=migrate_embedding_model,
                                            captions_model=captions_model,
-                                           enable_captions=enable_captions,
                                            caption_loader=caption_loader,
-                                           enable_ocr=enable_ocr,
-                                           enable_pdf_ocr=enable_pdf_ocr,
                                            verbose=kwargs['verbose'],
                                            n_jobs=kwargs['n_jobs'],
+                                           get_userid_auth=get_userid_auth,
+                                           image_loaders_options0=image_loaders_options0,
+                                           pdf_loaders_options0=pdf_loaders_options0,
+                                           url_loaders_options0=url_loaders_options0,
+                                           jq_schema0=jq_schema0,
                                            )
         add_file_outputs = [fileup_output, langchain_mode]
         add_file_kwargs = dict(fn=update_db_func,
-                               inputs=[fileup_output, my_db_state, selection_docs_state, chunk, chunk_size,
-                                       langchain_mode],
+                               inputs=[fileup_output, my_db_state, selection_docs_state, requests_state,
+                                       langchain_mode, chunk, chunk_size, embed,
+                                       image_loaders,
+                                       pdf_loaders,
+                                       url_loaders,
+                                       jq_schema,
+                                       ],
                                outputs=add_file_outputs + [sources_text, doc_exception_text],
                                queue=queue,
                                api_name='add_file' if allow_upload_api else None)
 
         # then no need for add buttons, only single changeable db
-        eventdb1a = fileup_output.upload(make_non_interactive, inputs=add_file_outputs, outputs=add_file_outputs,
+        eventdb1a = fileup_output.upload(user_state_setup,
+                                         inputs=[my_db_state, requests_state, langchain_mode],
+                                         outputs=[my_db_state, requests_state, langchain_mode],
                                          show_progress='minimal')
         eventdb1 = eventdb1a.then(**add_file_kwargs, show_progress='full')
-        eventdb1b = eventdb1.then(make_interactive, inputs=add_file_outputs, outputs=add_file_outputs,
-                                  show_progress='minimal')
-
         # deal with challenge to have fileup_output itself as input
         add_file_kwargs2 = dict(fn=update_db_func,
-                                inputs=[fileup_output_text, my_db_state, selection_docs_state, chunk, chunk_size,
-                                        langchain_mode],
+                                inputs=[fileup_output_text, my_db_state, selection_docs_state, requests_state,
+                                        langchain_mode, chunk, chunk_size, embed,
+                                        image_loaders,
+                                        pdf_loaders,
+                                        url_loaders,
+                                        jq_schema,
+                                        ],
                                 outputs=add_file_outputs + [sources_text, doc_exception_text],
                                 queue=queue,
                                 api_name='add_file_api' if allow_upload_api else None)
@@ -973,48 +1374,85 @@ def go_gradio(**kwargs):
 
         add_url_outputs = [url_text, langchain_mode]
         add_url_kwargs = dict(fn=update_user_db_url_func,
-                              inputs=[url_text, my_db_state, selection_docs_state, chunk, chunk_size,
-                                      langchain_mode],
+                              inputs=[url_text, my_db_state, selection_docs_state, requests_state,
+                                      langchain_mode, chunk, chunk_size, embed,
+                                      image_loaders,
+                                      pdf_loaders,
+                                      url_loaders,
+                                      jq_schema,
+                                      ],
                               outputs=add_url_outputs + [sources_text, doc_exception_text],
                               queue=queue,
                               api_name='add_url' if allow_upload_api else None)
 
-        eventdb2a = url_text.submit(fn=dummy_fun, inputs=url_text, outputs=url_text, queue=queue,
+        eventdb2a = url_text.submit(fn=user_state_setup,
+                                    inputs=[my_db_state, requests_state, url_text, url_text],
+                                    outputs=[my_db_state, requests_state, url_text],
+                                    queue=queue,
                                     show_progress='minimal')
         # work around https://github.com/gradio-app/gradio/issues/4733
-        eventdb2b = eventdb2a.then(make_non_interactive, inputs=add_url_outputs, outputs=add_url_outputs,
-                                   show_progress='minimal')
-        eventdb2 = eventdb2b.then(**add_url_kwargs, show_progress='full')
-        eventdb2c = eventdb2.then(make_interactive, inputs=add_url_outputs, outputs=add_url_outputs,
-                                  show_progress='minimal')
+        eventdb2 = eventdb2a.then(**add_url_kwargs, show_progress='full')
 
         update_user_db_txt_func = functools.partial(update_db_func, is_txt=True)
         add_text_outputs = [user_text_text, langchain_mode]
         add_text_kwargs = dict(fn=update_user_db_txt_func,
-                               inputs=[user_text_text, my_db_state, selection_docs_state, chunk, chunk_size,
-                                       langchain_mode],
+                               inputs=[user_text_text, my_db_state, selection_docs_state, requests_state,
+                                       langchain_mode, chunk, chunk_size, embed,
+                                       image_loaders,
+                                       pdf_loaders,
+                                       url_loaders,
+                                       jq_schema,
+                                       ],
                                outputs=add_text_outputs + [sources_text, doc_exception_text],
                                queue=queue,
                                api_name='add_text' if allow_upload_api else None
                                )
-        eventdb3a = user_text_text.submit(fn=dummy_fun, inputs=user_text_text, outputs=user_text_text, queue=queue,
+        eventdb3a = user_text_text.submit(fn=user_state_setup,
+                                          inputs=[my_db_state, requests_state, user_text_text, user_text_text],
+                                          outputs=[my_db_state, requests_state, user_text_text],
+                                          queue=queue,
                                           show_progress='minimal')
-        eventdb3b = eventdb3a.then(make_non_interactive, inputs=add_text_outputs, outputs=add_text_outputs,
-                                   show_progress='minimal')
-        eventdb3 = eventdb3b.then(**add_text_kwargs, show_progress='full')
-        eventdb3c = eventdb3.then(make_interactive, inputs=add_text_outputs, outputs=add_text_outputs,
-                                  show_progress='minimal')
-        db_events = [eventdb1a, eventdb1, eventdb1b, eventdb1_api,
-                     eventdb2a, eventdb2, eventdb2b, eventdb2c,
-                     eventdb3a, eventdb3b, eventdb3, eventdb3c]
+        eventdb3 = eventdb3a.then(**add_text_kwargs, show_progress='full')
+        db_events = [eventdb1a, eventdb1, eventdb1_api,
+                     eventdb2a, eventdb2,
+                     eventdb3a, eventdb3]
 
-        get_sources1 = functools.partial(get_sources, dbs=dbs, docs_state0=docs_state0)
+        get_sources1 = functools.partial(get_sources_gr, dbs=dbs, docs_state0=docs_state0,
+                                         load_db_if_exists=load_db_if_exists,
+                                         db_type=db_type,
+                                         use_openai_embedding=use_openai_embedding,
+                                         hf_embedding_model=hf_embedding_model,
+                                         migrate_embedding_model=migrate_embedding_model,
+                                         verbose=verbose,
+                                         get_userid_auth=get_userid_auth,
+                                         )
 
         # if change collection source, must clear doc selections from it to avoid inconsistency
         def clear_doc_choice():
             return gr.Dropdown.update(choices=docs_state0, value=DocumentChoice.ALL.value)
 
         langchain_mode.change(clear_doc_choice, inputs=None, outputs=document_choice, queue=False)
+
+        def change_visible_llama(x):
+            if x == 'llama':
+                return gr.update(visible=True), \
+                    gr.update(visible=True), \
+                    gr.update(visible=False), \
+                    gr.update(visible=False)
+            elif x in ['gptj', 'gpt4all_llama']:
+                return gr.update(visible=False), \
+                    gr.update(visible=False), \
+                    gr.update(visible=True), \
+                    gr.update(visible=True)
+            else:
+                return gr.update(visible=False), \
+                    gr.update(visible=False), \
+                    gr.update(visible=False), \
+                    gr.update(visible=False)
+
+        model_choice.change(change_visible_llama,
+                            inputs=model_choice,
+                            outputs=[row_llama, row_llama2, row_gpt4all, row_gpt4all2])
 
         def resize_col_tabs(x):
             return gr.Dropdown.update(scale=x)
@@ -1035,42 +1473,168 @@ def go_gradio(**kwargs):
         def update_dropdown(x):
             return gr.Dropdown.update(choices=x, value=[docs_state0[0]])
 
-        get_sources_args = dict(fn=get_sources1, inputs=[my_db_state, langchain_mode],
+        get_sources_args = dict(fn=get_sources1,
+                                inputs=[my_db_state, selection_docs_state, requests_state, langchain_mode],
                                 outputs=[file_source, docs_state],
-                                queue=queue,
-                                api_name='get_sources' if allow_api else None)
+                                queue=queue)
 
-        eventdb7 = get_sources_btn.click(**get_sources_args) \
+        eventdb7a = get_sources_btn.click(user_state_setup,
+                                          inputs=[my_db_state, requests_state, get_sources_btn, get_sources_btn],
+                                          outputs=[my_db_state, requests_state, get_sources_btn],
+                                          show_progress='minimal')
+        eventdb7 = eventdb7a.then(**get_sources_args,
+                                  api_name='get_sources' if allow_api else None) \
             .then(fn=update_dropdown, inputs=docs_state, outputs=document_choice)
-        # show button, else only show when add.  Could add to above get_sources for download/dropdown, but bit much maybe
-        show_sources1 = functools.partial(get_source_files_given_langchain_mode, dbs=dbs)
-        eventdb8 = show_sources_btn.click(fn=show_sources1, inputs=[my_db_state, langchain_mode], outputs=sources_text,
-                                          api_name='show_sources' if allow_api else None)
+
+        get_sources_api_args = dict(fn=functools.partial(get_sources1, api=True),
+                                    inputs=[my_db_state, selection_docs_state, requests_state, langchain_mode],
+                                    outputs=get_sources_api_text,
+                                    queue=queue)
+        get_sources_api_btn.click(**get_sources_api_args,
+                                  api_name='get_sources_api' if allow_api else None)
+
+        # show button, else only show when add.
+        # Could add to above get_sources for download/dropdown, but bit much maybe
+        show_sources1 = functools.partial(get_source_files_given_langchain_mode_gr,
+                                          dbs=dbs,
+                                          load_db_if_exists=load_db_if_exists,
+                                          db_type=db_type,
+                                          use_openai_embedding=use_openai_embedding,
+                                          hf_embedding_model=hf_embedding_model,
+                                          migrate_embedding_model=migrate_embedding_model,
+                                          verbose=verbose,
+                                          get_userid_auth=get_userid_auth)
+        eventdb8a = show_sources_btn.click(user_state_setup,
+                                           inputs=[my_db_state, requests_state, show_sources_btn, show_sources_btn],
+                                           outputs=[my_db_state, requests_state, show_sources_btn],
+                                           show_progress='minimal')
+        show_sources_kwargs = dict(fn=show_sources1,
+                                   inputs=[my_db_state, selection_docs_state, requests_state, langchain_mode],
+                                   outputs=sources_text)
+        eventdb8 = eventdb8a.then(**show_sources_kwargs,
+                                  api_name='show_sources' if allow_api else None)
 
         def update_viewable_dropdown(x):
             return gr.Dropdown.update(choices=x,
                                       value=viewable_docs_state0[0] if len(viewable_docs_state0) > 0 else None)
 
-        get_viewable_sources1 = functools.partial(get_sources, dbs=dbs, docs_state0=viewable_docs_state0)
-        get_viewable_sources_args = dict(fn=get_viewable_sources1, inputs=[my_db_state, langchain_mode],
+        get_viewable_sources1 = functools.partial(get_sources_gr, dbs=dbs, docs_state0=viewable_docs_state0,
+                                                  load_db_if_exists=load_db_if_exists,
+                                                  db_type=db_type,
+                                                  use_openai_embedding=use_openai_embedding,
+                                                  hf_embedding_model=hf_embedding_model,
+                                                  migrate_embedding_model=migrate_embedding_model,
+                                                  verbose=kwargs['verbose'],
+                                                  get_userid_auth=get_userid_auth)
+        get_viewable_sources_args = dict(fn=get_viewable_sources1,
+                                         inputs=[my_db_state, selection_docs_state, requests_state, langchain_mode],
                                          outputs=[file_source, viewable_docs_state],
                                          queue=queue,
                                          api_name='get_viewable_sources' if allow_api else None)
-        eventdb12 = get_viewable_sources_btn.click(**get_viewable_sources_args) \
+        eventdb12a = get_viewable_sources_btn.click(user_state_setup,
+                                                    inputs=[my_db_state, requests_state,
+                                                            get_viewable_sources_btn, get_viewable_sources_btn],
+                                                    outputs=[my_db_state, requests_state, get_viewable_sources_btn],
+                                                    show_progress='minimal')
+        eventdb12 = eventdb12a.then(**get_viewable_sources_args) \
             .then(fn=update_viewable_dropdown, inputs=viewable_docs_state,
                   outputs=view_document_choice)
 
-        def show_doc(file):
+        def show_doc(db1s, selection_docs_state1, requests_state1,
+                     langchain_mode1,
+                     single_document_choice1,
+                     view_raw_text_checkbox1,
+                     dbs1=None,
+                     load_db_if_exists1=None,
+                     db_type1=None,
+                     use_openai_embedding1=None,
+                     hf_embedding_model1=None,
+                     migrate_embedding_model1=None,
+                     verbose1=False,
+                     get_userid_auth1=None,
+                     max_raw_chunks=1000000):
+            file = single_document_choice1
+            document_choice1 = [single_document_choice1]
+            content = None
+            if db_type == 'chroma':
+                assert langchain_mode1 is not None
+                langchain_mode_paths = selection_docs_state1['langchain_mode_paths']
+                langchain_mode_types = selection_docs_state1['langchain_mode_types']
+                from src.gpt_langchain import set_userid, get_any_db, get_docs_and_meta
+                set_userid(db1s, requests_state1, get_userid_auth1)
+                top_k_docs = -1
+                db = get_any_db(db1s, langchain_mode1, langchain_mode_paths, langchain_mode_types,
+                                dbs=dbs1,
+                                load_db_if_exists=load_db_if_exists1,
+                                db_type=db_type1,
+                                use_openai_embedding=use_openai_embedding1,
+                                hf_embedding_model=hf_embedding_model1,
+                                migrate_embedding_model=migrate_embedding_model1,
+                                for_sources_list=True,
+                                verbose=verbose1,
+                                )
+                query_action = False  # long chunks like would be used for summarize
+                # the below is as or filter, so will show doc or by chunk, unrestricted
+                one_filter = \
+                    [{"source": {"$eq": x}, "chunk_id": {"$gte": 0}} if query_action else {"source": {"$eq": x},
+                                                                                           "chunk_id": {
+                                                                                               "$eq": -1}}
+                     for x in document_choice1][0]
+                if view_raw_text_checkbox1:
+                    # like or, full raw all chunk types
+                    filter_kwargs = dict(filter=one_filter)
+                else:
+                    filter_kwargs = dict(filter={"$and": [dict(source=one_filter['source']),
+                                                          dict(chunk_id=one_filter['chunk_id'])]})
+                db_documents, db_metadatas = get_docs_and_meta(db, top_k_docs, filter_kwargs=filter_kwargs)
+                # order documents
+                from langchain.docstore.document import Document
+                docs_with_score = [(Document(page_content=result[0], metadata=result[1] or {}), 0)
+                                   for result in zip(db_documents, db_metadatas)]
+                doc_chunk_ids = [x.get('chunk_id', -1) for x in db_metadatas]
+                doc_page_ids = [x.get('page', 0) for x in db_metadatas]
+                doc_hashes = [x.get('doc_hash', 'None') for x in db_metadatas]
+                docs_with_score = [x for hx, px, cx, x in
+                                   sorted(zip(doc_hashes, doc_page_ids, doc_chunk_ids, docs_with_score),
+                                          key=lambda x: (x[0], x[1], x[2]))
+                                   # if cx == -1
+                                   ]
+                db_metadatas = [x[0].metadata for x in docs_with_score][:max_raw_chunks]
+                db_documents = [x[0].page_content for x in docs_with_score][:max_raw_chunks]
+                # done reordering
+                if view_raw_text_checkbox1:
+                    content = [dict_to_html(x) + '\n' + text_to_html(y) for x, y in zip(db_metadatas, db_documents)]
+                else:
+                    content = [text_to_html(y) for x, y in zip(db_metadatas, db_documents)]
+                content = '\n'.join(content)
+                content = f"""<!DOCTYPE html>
+<html>
+ <head>
+    <title>{file}</title>
+ </head>
+  <body>
+  {content}
+  </body>
+</html>"""
+
             dummy1 = gr.update(visible=False, value=None)
-            dummy_ret = dummy1, dummy1, dummy1, dummy1
+            # backup is text dump of db version
+            if content:
+                dummy_ret = dummy1, dummy1, dummy1, dummy1, gr.update(visible=True, value=content)
+                if view_raw_text_checkbox1:
+                    return dummy_ret
+            else:
+                dummy_ret = dummy1, dummy1, dummy1, dummy1, dummy1
+
             if not isinstance(file, str):
                 return dummy_ret
 
-            if file.lower().endswith('.html') or file.lower().endswith('.mhtml') or file.lower().endswith('.htm'):
+            if file.lower().endswith('.html') or file.lower().endswith('.mhtml') or file.lower().endswith('.htm') or \
+                    file.lower().endswith('.xml'):
                 try:
                     with open(file, 'rt') as f:
                         content = f.read()
-                    return gr.update(visible=True, value=content), dummy1, dummy1, dummy1
+                    return gr.update(visible=True, value=content), dummy1, dummy1, dummy1, dummy1
                 except:
                     return dummy_ret
 
@@ -1078,7 +1642,7 @@ def go_gradio(**kwargs):
                 try:
                     with open(file, 'rt') as f:
                         content = f.read()
-                    return dummy1, dummy1, dummy1, gr.update(visible=True, value=content)
+                    return dummy1, dummy1, dummy1, gr.update(visible=True, value=content), dummy1
                 except:
                     return dummy_ret
 
@@ -1087,7 +1651,7 @@ def go_gradio(**kwargs):
                     with open(file, 'rt') as f:
                         content = f.read()
                     content = f"```python\n{content}\n```"
-                    return dummy1, dummy1, dummy1, gr.update(visible=True, value=content)
+                    return dummy1, dummy1, dummy1, gr.update(visible=True, value=content), dummy1
                 except:
                     return dummy_ret
 
@@ -1097,7 +1661,7 @@ def go_gradio(**kwargs):
                     with open(file, 'rt') as f:
                         content = f.read()
                     content = f"```text\n{content}\n```"
-                    return dummy1, dummy1, dummy1, gr.update(visible=True, value=content)
+                    return dummy1, dummy1, dummy1, gr.update(visible=True, value=content), dummy1
                 except:
                     return dummy_ret
 
@@ -1110,14 +1674,15 @@ def go_gradio(**kwargs):
                 func = pd.read_excel
             elif file.lower().endswith('.json'):
                 func = pd.read_json
-            elif file.lower().endswith('.xml'):
-                func = pd.read_xml
+            # pandas doesn't show full thing, even if html view shows broken things still better
+            # elif file.lower().endswith('.xml'):
+            #    func = pd.read_xml
             if func is not None:
                 try:
                     df = func(file).head(100)
                 except:
                     return dummy_ret
-                return dummy1, gr.update(visible=True, value=df), dummy1, dummy1
+                return dummy1, gr.update(visible=True, value=df), dummy1, dummy1, dummy1
             port = int(os.getenv('GRADIO_SERVER_PORT', '7860'))
             import pathlib
             absolute_path_string = os.path.abspath(file)
@@ -1125,42 +1690,117 @@ def go_gradio(**kwargs):
             url = get_url(absolute_path_string, from_str=True)
             img_url = url.replace("""<a href=""", """<img src=""")
             if file.lower().endswith('.png') or file.lower().endswith('.jpg') or file.lower().endswith('.jpeg'):
-                return gr.update(visible=True, value=img_url), dummy1, dummy1, dummy1
+                return gr.update(visible=True, value=img_url), dummy1, dummy1, dummy1, dummy1
             elif file.lower().endswith('.pdf') or 'arxiv.org/pdf' in file:
+
+                # account for when use `wget -b -m -k -o wget.log -e robots=off`
+                if url_alive('http://' + file):
+                    file = 'http://' + file
+                if url_alive('https://' + file):
+                    file = 'https://' + file
+
                 if file.lower().startswith('http') or file.lower().startswith('https'):
                     # if file is online, then might as well use google(?)
                     document1 = file
                     return gr.update(visible=True,
                                      value=f"""<iframe width="1000" height="800" src="https://docs.google.com/viewerng/viewer?url={document1}&embedded=true" frameborder="0" height="100%" width="100%">
 </iframe>
-"""), dummy1, dummy1, dummy1
+"""), dummy1, dummy1, dummy1, dummy1
                 else:
-                    ip = get_local_ip()
-                    document1 = url_path.replace('file://', f'http://{ip}:{port}/')
-                    # document1 = url
-                    return gr.update(visible=True, value=f"""<object data="{document1}" type="application/pdf">
-    <iframe src="https://docs.google.com/viewer?url={document1}&embedded=true"></iframe>
-</object>"""), dummy1, dummy1, dummy1
+                    # FIXME: This doesn't work yet, just return dummy result for now
+                    if False:
+                        ip = get_local_ip()
+                        document1 = url_path.replace('file://', f'http://{ip}:{port}/')
+                        # document1 = url
+                        return gr.update(visible=True, value=f"""<object data="{document1}" type="application/pdf">
+        <iframe src="https://docs.google.com/viewer?url={document1}&embedded=true"></iframe>
+    </object>"""), dummy1, dummy1, dummy1, dummy1
+                    else:
+                        return dummy_ret
             else:
                 return dummy_ret
 
-        view_document_choice.select(fn=show_doc, inputs=view_document_choice,
-                                    outputs=[doc_view, doc_view2, doc_view3, doc_view4])
+        eventdb_viewa = view_document_choice.select(user_state_setup,
+                                                    inputs=[my_db_state, requests_state,
+                                                            view_document_choice, view_document_choice],
+                                                    outputs=[my_db_state, requests_state, view_document_choice],
+                                                    show_progress='minimal')
+        show_doc_func = functools.partial(show_doc,
+                                          dbs1=dbs,
+                                          load_db_if_exists1=load_db_if_exists,
+                                          db_type1=db_type,
+                                          use_openai_embedding1=use_openai_embedding,
+                                          hf_embedding_model1=hf_embedding_model,
+                                          migrate_embedding_model1=migrate_embedding_model,
+                                          verbose1=verbose,
+                                          get_userid_auth1=get_userid_auth,
+                                          max_raw_chunks=kwargs['max_raw_chunks'],
+                                          )
+        eventdb_viewa.then(fn=show_doc_func,
+                           inputs=[my_db_state, selection_docs_state, requests_state, langchain_mode,
+                                   view_document_choice, view_raw_text_checkbox],
+                           outputs=[doc_view, doc_view2, doc_view3, doc_view4, doc_view5])
 
         # Get inputs to evaluate() and make_db()
         # don't deepcopy, can contain model itself
         all_kwargs = kwargs.copy()
         all_kwargs.update(locals())
 
-        refresh_sources1 = functools.partial(update_and_get_source_files_given_langchain_mode,
-                                             **get_kwargs(update_and_get_source_files_given_langchain_mode,
-                                                          exclude_names=['db1s', 'langchain_mode', 'chunk',
-                                                                         'chunk_size'],
-                                                          **all_kwargs))
-        eventdb9 = refresh_sources_btn.click(fn=refresh_sources1,
-                                             inputs=[my_db_state, langchain_mode, chunk, chunk_size],
-                                             outputs=sources_text,
-                                             api_name='refresh_sources' if allow_api else None)
+        refresh_sources1 = functools.partial(update_and_get_source_files_given_langchain_mode_gr,
+                                             captions_model=captions_model,
+                                             caption_loader=caption_loader,
+                                             dbs=dbs,
+                                             first_para=kwargs['first_para'],
+                                             hf_embedding_model=hf_embedding_model,
+                                             use_openai_embedding=use_openai_embedding,
+                                             migrate_embedding_model=migrate_embedding_model,
+                                             text_limit=kwargs['text_limit'],
+                                             db_type=db_type,
+                                             load_db_if_exists=load_db_if_exists,
+                                             n_jobs=n_jobs, verbose=verbose,
+                                             get_userid_auth=get_userid_auth,
+                                             image_loaders_options0=image_loaders_options0,
+                                             pdf_loaders_options0=pdf_loaders_options0,
+                                             url_loaders_options0=url_loaders_options0,
+                                             jq_schema0=jq_schema0,
+                                             )
+        eventdb9a = refresh_sources_btn.click(user_state_setup,
+                                              inputs=[my_db_state, requests_state,
+                                                      refresh_sources_btn, refresh_sources_btn],
+                                              outputs=[my_db_state, requests_state, refresh_sources_btn],
+                                              show_progress='minimal')
+        eventdb9 = eventdb9a.then(fn=refresh_sources1,
+                                  inputs=[my_db_state, selection_docs_state, requests_state,
+                                          langchain_mode, chunk, chunk_size,
+                                          image_loaders,
+                                          pdf_loaders,
+                                          url_loaders,
+                                          jq_schema,
+                                          ],
+                                  outputs=sources_text,
+                                  api_name='refresh_sources' if allow_api else None)
+
+        delete_sources1 = functools.partial(del_source_files_given_langchain_mode_gr,
+                                            dbs=dbs,
+                                            load_db_if_exists=load_db_if_exists,
+                                            db_type=db_type,
+                                            use_openai_embedding=use_openai_embedding,
+                                            hf_embedding_model=hf_embedding_model,
+                                            migrate_embedding_model=migrate_embedding_model,
+                                            verbose=verbose,
+                                            get_userid_auth=get_userid_auth)
+        eventdb90a = delete_sources_btn.click(user_state_setup,
+                                              inputs=[my_db_state, requests_state,
+                                                      delete_sources_btn, delete_sources_btn],
+                                              outputs=[my_db_state, requests_state, delete_sources_btn],
+                                              show_progress='minimal')
+        eventdb90 = eventdb90a.then(fn=delete_sources1,
+                                    inputs=[my_db_state, selection_docs_state, requests_state, document_choice,
+                                            langchain_mode],
+                                    outputs=sources_text,
+                                    api_name='delete_sources' if allow_api else None) \
+            .then(**get_sources_args) \
+            .then(fn=update_dropdown, inputs=docs_state, outputs=document_choice)
 
         def check_admin_pass(x):
             return gr.update(visible=x == admin_pass)
@@ -1168,15 +1808,175 @@ def go_gradio(**kwargs):
         def close_admin(x):
             return gr.update(visible=not (x == admin_pass))
 
+        eventdb_logina = login_btn.click(user_state_setup,
+                                         inputs=[my_db_state, requests_state, login_btn, login_btn],
+                                         outputs=[my_db_state, requests_state, login_btn],
+                                         show_progress='minimal')
+
+        def login(db1s, selection_docs_state1, requests_state1, chat_state1, langchain_mode1,
+                  username1, password1,
+                  text_output1, text_output21, *text_outputs1,
+                  auth_filename=None, num_model_lock=0, pre_authorized=False):
+            # use full auth login to allow new users if open access etc.
+            if pre_authorized:
+                username1 = requests_state1['username']
+                password1 = None
+                authorized1 = True
+            else:
+                authorized1 = authf(username1, password1, selection_docs_state1=selection_docs_state1)
+            if authorized1:
+                set_userid_gr(db1s, requests_state1, get_userid_auth)
+                username2 = get_username(requests_state1)
+                text_outputs1 = list(text_outputs1)
+
+                success1, text_result, text_output1, text_output21, text_outputs1, langchain_mode1 = \
+                    load_auth(db1s, requests_state1, auth_filename, selection_docs_state1=selection_docs_state1,
+                              chat_state1=chat_state1, langchain_mode1=langchain_mode1,
+                              text_output1=text_output1, text_output21=text_output21, text_outputs1=text_outputs1,
+                              username_override=username1, password_to_check=password1)
+            else:
+                success1 = False
+                text_result = "Wrong password for user %s" % username1
+            df_langchain_mode_paths1 = get_df_langchain_mode_paths(selection_docs_state1)
+            if success1:
+                requests_state1['username'] = username1
+            return db1s, selection_docs_state1, requests_state1, chat_state1, \
+                text_result, df_langchain_mode_paths1, \
+                gr.update(choices=list(chat_state1.keys()), value=None), \
+                gr.update(choices=get_langchain_choices(selection_docs_state1),
+                          value=langchain_mode1), \
+                text_output1, text_output21, *tuple(text_outputs1)
+
+        login_func = functools.partial(login,
+                                       auth_filename=kwargs['auth_filename'],
+                                       num_model_lock=len(text_outputs),
+                                       pre_authorized=False,
+                                       )
+        load_login_func = functools.partial(login,
+                                            auth_filename=kwargs['auth_filename'],
+                                            num_model_lock=len(text_outputs),
+                                            pre_authorized=True,
+                                            )
+        login_inputs = [my_db_state, selection_docs_state, requests_state, chat_state,
+                        langchain_mode,
+                        username_text, password_text,
+                        text_output, text_output2] + text_outputs
+        login_outputs = [my_db_state, selection_docs_state, requests_state, chat_state,
+                         login_result_text, langchain_mode_path_text,
+                         radio_chats,
+                         langchain_mode,
+                         text_output, text_output2] + text_outputs
+        eventdb_logina.then(login_func,
+                            inputs=login_inputs,
+                            outputs=login_outputs,
+                            queue=False)
+
         admin_pass_textbox.submit(check_admin_pass, inputs=admin_pass_textbox, outputs=system_row, queue=False) \
             .then(close_admin, inputs=admin_pass_textbox, outputs=admin_row, queue=False)
 
-        def add_langchain_mode(db1s, selection_docs_state1, langchain_mode1, y):
+        def load_auth(db1s, requests_state1, auth_filename=None, selection_docs_state1=None,
+                      chat_state1=None, langchain_mode1=None,
+                      text_output1=None, text_output21=None, text_outputs1=None,
+                      username_override=None, password_to_check=None):
+            # in-place assignment
+            if not auth_filename:
+                return False, "No auth file", text_output1, text_output21, text_outputs1
+            # if first time here, need to set userID
+            set_userid_gr(db1s, requests_state1, get_userid_auth)
+            if username_override:
+                username1 = username_override
+            else:
+                username1 = get_username(requests_state1)
+            success1 = False
+            with filelock.FileLock(auth_filename + '.lock'):
+                if os.path.isfile(auth_filename):
+                    with open(auth_filename, 'rt') as f:
+                        auth_dict = json.load(f)
+                        if username1 in auth_dict:
+                            auth_user = auth_dict[username1]
+                            if password_to_check:
+                                if auth_user['password'] != password_to_check:
+                                    return False, [], [], [], "Invalid password for user %s" % username1
+                            if username_override:
+                                # then use original user id
+                                set_userid_direct_gr(db1s, auth_dict[username1]['userid'], username1)
+                            if 'selection_docs_state' in auth_user:
+                                update_auth_selection(auth_user, selection_docs_state1)
+                            if 'chat_state' in auth_user:
+                                chat_state1.update(auth_user['chat_state'])
+                            if 'text_output' in auth_user:
+                                text_output1 = auth_user['text_output']
+                            if 'text_output2' in auth_user:
+                                text_output21 = auth_user['text_output2']
+                            if 'text_outputs' in auth_user:
+                                text_outputs1 = auth_user['text_outputs']
+                            if 'langchain_mode' in auth_user:
+                                langchain_mode1 = auth_user['langchain_mode']
+                            text_result = "Successful login for %s" % username1
+                            success1 = True
+                        else:
+                            text_result = "No user %s" % username1
+                else:
+                    text_result = "No auth file"
+            return success1, text_result, text_output1, text_output21, text_outputs1, langchain_mode1
+
+        def save_auth_dict(auth_dict, auth_filename):
+            backup_file = auth_filename + '.bak' + str(uuid.uuid4())
+            if os.path.isfile(auth_filename):
+                shutil.copy(auth_filename, backup_file)
+            try:
+                with open(auth_filename, 'wt') as f:
+                    f.write(json.dumps(auth_dict, indent=2))
+            except BaseException as e:
+                print("Failure to save auth %s, restored backup: %s: %s" % (auth_filename, backup_file, str(e)),
+                      flush=True)
+                shutil.copy(backup_file, auth_dict)
+                if os.getenv('HARD_ASSERTS'):
+                    # unexpected in testing or normally
+                    raise
+
+        def save_auth(requests_state1, auth_filename, auth_freeze,
+                      selection_docs_state1=None, chat_state1=None, langchain_mode1=None,
+                      text_output1=None, text_output21=None, text_outputs1=None):
+            if auth_freeze:
+                return
+            if not auth_filename:
+                return
+            # save to auth file
+            username1 = get_username(requests_state1)
+            with filelock.FileLock(auth_filename + '.lock'):
+                if os.path.isfile(auth_filename):
+                    with open(auth_filename, 'rt') as f:
+                        auth_dict = json.load(f)
+                    if username1 in auth_dict:
+                        auth_user = auth_dict[username1]
+                        if selection_docs_state1:
+                            update_auth_selection(auth_user, selection_docs_state1, save=True)
+                        if chat_state1:
+                            # overwrite
+                            auth_user['chat_state'] = chat_state1
+                        if text_output1:
+                            auth_user['text_output'] = text_output1
+                        if text_output21:
+                            auth_user['text_output2'] = text_output21
+                        if text_outputs1:
+                            auth_user['text_outputs'] = text_outputs1
+                        if langchain_mode1:
+                            auth_user['langchain_mode'] = langchain_mode1
+                        save_auth_dict(auth_dict, auth_filename)
+
+        def add_langchain_mode(db1s, selection_docs_state1, requests_state1, langchain_mode1, y,
+                               auth_filename=None, auth_freeze=None, guest_name=None):
+            assert auth_filename is not None
+            assert auth_freeze is not None
+
+            set_userid_gr(db1s, requests_state1, get_userid_auth)
+            username1 = get_username(requests_state1)
             for k in db1s:
-                set_userid(db1s[k])
+                set_dbid_gr(db1s[k])
             langchain_modes = selection_docs_state1['langchain_modes']
             langchain_mode_paths = selection_docs_state1['langchain_mode_paths']
-            visible_langchain_modes = selection_docs_state1['visible_langchain_modes']
+            langchain_mode_types = selection_docs_state1['langchain_mode_types']
 
             user_path = None
             valid = True
@@ -1187,11 +1987,29 @@ def go_gradio(**kwargs):
                     # real restriction is:
                     # ValueError: Expected collection name that (1) contains 3-63 characters, (2) starts and ends with an alphanumeric character, (3) otherwise contains only alphanumeric characters, underscores or hyphens (-), (4) contains no two consecutive periods (..) and (5) is not a valid IPv4 address, got me
                     # but just make simpler
-                    user_path = y2[1] if len(y2) > 1 else None  # assume scratch if don't have user_path
+                    # assume personal if don't have user_path
+                    langchain_mode_type = y2[1] if len(y2) > 1 else LangChainTypes.PERSONAL.value
+                    user_path = y2[2] if len(y2) > 2 else None  # assume None if don't have user_path
                     if user_path in ['', "''"]:
-                        # for scratch spaces
+                        # transcribe UI input
                         user_path = None
-                    if langchain_mode2 in langchain_modes_intrinsic:
+                    if langchain_mode_type not in [x.value for x in list(LangChainTypes)]:
+                        textbox = "Invalid type %s" % langchain_mode_type
+                        valid = False
+                        langchain_mode2 = langchain_mode1
+                    elif langchain_mode_type == LangChainTypes.SHARED.value and username1 == guest_name:
+                        textbox = "Guests cannot add shared collections"
+                        valid = False
+                        langchain_mode2 = langchain_mode1
+                    elif user_path is not None and langchain_mode_type == LangChainTypes.PERSONAL.value:
+                        textbox = "Do not pass user_path for personal/scratch types"
+                        valid = False
+                        langchain_mode2 = langchain_mode1
+                    elif user_path is not None and username1 == guest_name:
+                        textbox = "Guests cannot add collections with path"
+                        valid = False
+                        langchain_mode2 = langchain_mode1
+                    elif langchain_mode2 in langchain_modes_intrinsic:
                         user_path = None
                         textbox = "Invalid access to use internal name: %s" % langchain_mode2
                         valid = False
@@ -1200,8 +2018,7 @@ def go_gradio(**kwargs):
                         if user_path:
                             user_path = makedirs(user_path, exist_ok=True, use_base=True)
                         langchain_mode_paths.update({langchain_mode2: user_path})
-                        if langchain_mode2 not in visible_langchain_modes:
-                            visible_langchain_modes.append(langchain_mode2)
+                        langchain_mode_types.update({langchain_mode2: langchain_mode_type})
                         if langchain_mode2 not in langchain_modes:
                             langchain_modes.append(langchain_mode2)
                         textbox = ''
@@ -1209,7 +2026,7 @@ def go_gradio(**kwargs):
                         valid = False
                         langchain_mode2 = langchain_mode1
                         textbox = "Invalid access.  user allowed: %s " \
-                                  "scratch allowed: %s" % (allow_upload_to_user_data, allow_upload_to_my_data)
+                                  "personal/scratch allowed: %s" % (allow_upload_to_user_data, allow_upload_to_my_data)
                 else:
                     valid = False
                     langchain_mode2 = langchain_mode1
@@ -1218,106 +2035,190 @@ def go_gradio(**kwargs):
                 valid = False
                 langchain_mode2 = langchain_mode1
                 textbox = "Invalid, must be like UserData2, user_path2"
-            selection_docs_state1 = update_langchain_mode_paths(db1s, selection_docs_state1)
+            selection_docs_state1 = update_langchain_mode_paths(selection_docs_state1)
             df_langchain_mode_paths1 = get_df_langchain_mode_paths(selection_docs_state1)
             choices = get_langchain_choices(selection_docs_state1)
 
             if valid and not user_path:
                 # needs to have key for it to make it known different from userdata case in _update_user_db()
-                db1s[langchain_mode2] = [None, None]
+                from src.gpt_langchain import length_db1
+                db1s[langchain_mode2] = [None] * length_db1()
             if valid:
-                save_collection_names(langchain_modes, visible_langchain_modes, langchain_mode_paths, LangChainMode,
-                                      db1s, True if user_path else False, save_dir=kwargs['save_dir'])
+                save_auth(requests_state1, auth_filename, auth_freeze, selection_docs_state1=selection_docs_state1,
+                          langchain_mode1=langchain_mode2)
 
             return db1s, selection_docs_state1, gr.update(choices=choices,
                                                           value=langchain_mode2), textbox, df_langchain_mode_paths1
 
-        def remove_langchain_mode(db1s, selection_docs_state1, langchain_mode1, langchain_mode2, dbsu=None):
+        def remove_langchain_mode(db1s, selection_docs_state1, requests_state1,
+                                  langchain_mode1, langchain_mode2, dbsu=None, auth_filename=None, auth_freeze=None,
+                                  guest_name=None,
+                                  purge=False):
+            assert auth_filename is not None
+            assert auth_freeze is not None
+
+            set_userid_gr(db1s, requests_state1, get_userid_auth)
             for k in db1s:
-                set_userid(db1s[k])
+                set_dbid_gr(db1s[k])
             assert dbsu is not None
             langchain_modes = selection_docs_state1['langchain_modes']
             langchain_mode_paths = selection_docs_state1['langchain_mode_paths']
-            visible_langchain_modes = selection_docs_state1['visible_langchain_modes']
+            langchain_mode_types = selection_docs_state1['langchain_mode_types']
+            langchain_type2 = langchain_mode_types.get(langchain_mode2, LangChainTypes.EITHER.value)
 
+            changed_state = False
+            textbox = "Invalid access, cannot remove %s" % langchain_mode2
             in_scratch_db = langchain_mode2 in db1s
             in_user_db = dbsu is not None and langchain_mode2 in dbsu
             if in_scratch_db and not allow_upload_to_my_data or \
                     in_user_db and not allow_upload_to_user_data or \
                     langchain_mode2 in langchain_modes_intrinsic:
-                # NOTE: Doesn't fail if remove MyData, but didn't debug odd behavior seen with upload after gone
-                textbox = "Invalid access, cannot remove %s" % langchain_mode2
-                df_langchain_mode_paths1 = get_df_langchain_mode_paths(selection_docs_state1)
+                can_remove = False
+                can_purge = False
+                if langchain_mode2 in langchain_modes_intrinsic:
+                    can_purge = True
             else:
-                # change global variables
-                if langchain_mode2 in visible_langchain_modes:
-                    visible_langchain_modes.remove(langchain_mode2)
-                    textbox = ""
-                else:
-                    textbox = "%s was not visible" % langchain_mode2
-                if langchain_mode2 in langchain_modes:
-                    langchain_modes.remove(langchain_mode2)
-                if langchain_mode2 in langchain_mode_paths:
-                    langchain_mode_paths.pop(langchain_mode2)
-                if langchain_mode2 in db1s:
-                    # remove db entirely, so not in list, else need to manage visible list in update_langchain_mode_paths()
-                    # FIXME: Remove location?
-                    if langchain_mode2 != LangChainMode.MY_DATA.value:
+                can_remove = True
+                can_purge = True
+
+            # change global variables
+            if langchain_mode2 in langchain_modes or langchain_mode2 in langchain_mode_paths or langchain_mode2 in db1s:
+                if can_purge and purge:
+                    # remove source files
+                    from src.gpt_langchain import get_sources, del_from_db
+                    sources_file, source_list, db = get_sources(db1s, selection_docs_state1,
+                                                                requests_state1, langchain_mode2, dbs=dbsu,
+                                                                docs_state0=docs_state0,
+                                                                load_db_if_exists=load_db_if_exists,
+                                                                db_type=db_type,
+                                                                use_openai_embedding=use_openai_embedding,
+                                                                hf_embedding_model=hf_embedding_model,
+                                                                migrate_embedding_model=migrate_embedding_model,
+                                                                verbose=verbose,
+                                                                get_userid_auth=get_userid_auth)
+                    del_from_db(db, source_list, db_type=db_type)
+                    for fil in source_list:
+                        if os.path.isfile(fil):
+                            print("Purged %s" % fil, flush=True)
+                            remove(fil)
+                    # remove db directory
+                    from src.gpt_langchain import get_persist_directory
+                    persist_directory, langchain_type2 = \
+                        get_persist_directory(langchain_mode2, langchain_type=langchain_type2,
+                                              db1s=db1s, dbs=dbsu)
+                    print("removed persist_directory %s" % persist_directory, flush=True)
+                    remove(persist_directory)
+                    textbox = "Purged, but did not remove %s" % langchain_mode2
+                if can_remove:
+                    if langchain_mode2 in langchain_modes:
+                        langchain_modes.remove(langchain_mode2)
+                    if langchain_mode2 in langchain_mode_paths:
+                        langchain_mode_paths.pop(langchain_mode2)
+                    if langchain_mode2 in langchain_mode_types:
+                        langchain_mode_types.pop(langchain_mode2)
+                    if langchain_mode2 in db1s and langchain_mode2 != LangChainMode.MY_DATA.value:
                         # don't remove last MyData, used as user hash
                         db1s.pop(langchain_mode2)
-                # only show
-                selection_docs_state1 = update_langchain_mode_paths(db1s, selection_docs_state1)
-                df_langchain_mode_paths1 = get_df_langchain_mode_paths(selection_docs_state1)
+                    textbox = ""
+                    changed_state = True
+            else:
+                textbox = "%s is not visible" % langchain_mode2
 
-                save_collection_names(langchain_modes, visible_langchain_modes, langchain_mode_paths, LangChainMode,
-                                      db1s, in_user_db, save_dir=kwargs['save_dir'])
+            # update
+            selection_docs_state1 = update_langchain_mode_paths(selection_docs_state1)
+            df_langchain_mode_paths1 = get_df_langchain_mode_paths(selection_docs_state1)
+
+            if changed_state:
+                save_auth(requests_state1, auth_filename, auth_freeze, selection_docs_state1=selection_docs_state1,
+                          langchain_mode1=langchain_mode2)
 
             return db1s, selection_docs_state1, \
                 gr.update(choices=get_langchain_choices(selection_docs_state1),
                           value=langchain_mode2), textbox, df_langchain_mode_paths1
 
-        new_langchain_mode_text.submit(fn=add_langchain_mode,
-                                       inputs=[my_db_state, selection_docs_state, langchain_mode,
-                                               new_langchain_mode_text],
-                                       outputs=[my_db_state, selection_docs_state, langchain_mode,
-                                                new_langchain_mode_text,
-                                                langchain_mode_path_text],
-                                       api_name='new_langchain_mode_text' if allow_api and allow_upload_to_user_data else None)
-        remove_langchain_mode_func = functools.partial(remove_langchain_mode, dbsu=dbs)
-        remove_langchain_mode_text.submit(fn=remove_langchain_mode_func,
-                                          inputs=[my_db_state, selection_docs_state, langchain_mode,
-                                                  remove_langchain_mode_text],
-                                          outputs=[my_db_state, selection_docs_state, langchain_mode,
-                                                   remove_langchain_mode_text,
-                                                   langchain_mode_path_text],
-                                          api_name='remove_langchain_mode_text' if allow_api and allow_upload_to_user_data else None)
+        eventdb20a = new_langchain_mode_text.submit(user_state_setup,
+                                                    inputs=[my_db_state, requests_state,
+                                                            new_langchain_mode_text, new_langchain_mode_text],
+                                                    outputs=[my_db_state, requests_state, new_langchain_mode_text],
+                                                    show_progress='minimal')
+        add_langchain_mode_func = functools.partial(add_langchain_mode,
+                                                    auth_filename=kwargs['auth_filename'],
+                                                    auth_freeze=kwargs['auth_freeze'],
+                                                    guest_name=kwargs['guest_name'],
+                                                    )
+        eventdb20b = eventdb20a.then(fn=add_langchain_mode_func,
+                                     inputs=[my_db_state, selection_docs_state, requests_state,
+                                             langchain_mode,
+                                             new_langchain_mode_text],
+                                     outputs=[my_db_state, selection_docs_state, langchain_mode,
+                                              new_langchain_mode_text,
+                                              langchain_mode_path_text],
+                                     api_name='new_langchain_mode_text' if allow_api and allow_upload_to_user_data else None)
+        remove_langchain_mode_func = functools.partial(remove_langchain_mode,
+                                                       dbsu=dbs,
+                                                       auth_filename=kwargs['auth_filename'],
+                                                       auth_freeze=kwargs['auth_freeze'],
+                                                       guest_name=kwargs['guest_name'],
+                                                       )
+        eventdb21a = remove_langchain_mode_text.submit(user_state_setup,
+                                                       inputs=[my_db_state,
+                                                               requests_state,
+                                                               remove_langchain_mode_text, remove_langchain_mode_text],
+                                                       outputs=[my_db_state,
+                                                                requests_state, remove_langchain_mode_text],
+                                                       show_progress='minimal')
+        remove_langchain_mode_kwargs = dict(fn=remove_langchain_mode_func,
+                                            inputs=[my_db_state, selection_docs_state, requests_state,
+                                                    langchain_mode,
+                                                    remove_langchain_mode_text],
+                                            outputs=[my_db_state, selection_docs_state, langchain_mode,
+                                                     remove_langchain_mode_text,
+                                                     langchain_mode_path_text])
+        eventdb21b = eventdb21a.then(**remove_langchain_mode_kwargs,
+                                     api_name='remove_langchain_mode_text' if allow_api and allow_upload_to_user_data else None)
 
-        def update_langchain_gr(db1s, selection_docs_state1, langchain_mode1):
-            for k in db1s:
-                set_userid(db1s[k])
-            langchain_modes = selection_docs_state1['langchain_modes']
-            langchain_mode_paths = selection_docs_state1['langchain_mode_paths']
-            visible_langchain_modes = selection_docs_state1['visible_langchain_modes']
-            # in-place
+        eventdb22a = purge_langchain_mode_text.submit(user_state_setup,
+                                                      inputs=[my_db_state,
+                                                              requests_state,
+                                                              purge_langchain_mode_text, purge_langchain_mode_text],
+                                                      outputs=[my_db_state,
+                                                               requests_state, purge_langchain_mode_text],
+                                                      show_progress='minimal')
+        purge_langchain_mode_func = functools.partial(remove_langchain_mode_func, purge=True)
+        purge_langchain_mode_kwargs = dict(fn=purge_langchain_mode_func,
+                                           inputs=[my_db_state, selection_docs_state, requests_state,
+                                                   langchain_mode,
+                                                   purge_langchain_mode_text],
+                                           outputs=[my_db_state, selection_docs_state, langchain_mode,
+                                                    purge_langchain_mode_text,
+                                                    langchain_mode_path_text])
+        # purge_langchain_mode_kwargs = remove_langchain_mode_kwargs.copy()
+        # purge_langchain_mode_kwargs['fn'] = functools.partial(remove_langchain_mode_kwargs['fn'], purge=True)
+        eventdb22b = eventdb22a.then(**purge_langchain_mode_kwargs,
+                                     api_name='purge_langchain_mode_text' if allow_api and allow_upload_to_user_data else None) \
+            .then(**get_sources_args) \
+            .then(**show_sources_kwargs) \
+            .then(fn=update_dropdown, inputs=docs_state, outputs=document_choice)
 
-            # update user collaborative collections
-            update_langchain(langchain_modes, visible_langchain_modes, langchain_mode_paths, '',
-                             save_dir=kwargs['save_dir'])
-            # update scratch single-user collections
-            user_hash = db1s.get(LangChainMode.MY_DATA.value, '')[1]
-            update_langchain(langchain_modes, visible_langchain_modes, langchain_mode_paths, user_hash,
-                             save_dir=kwargs['save_dir'])
+        def load_langchain_gr(db1s, selection_docs_state1, requests_state1, langchain_mode1, auth_filename=None):
+            load_auth(db1s, requests_state1, auth_filename, selection_docs_state1=selection_docs_state1)
 
-            selection_docs_state1 = update_langchain_mode_paths(db1s, selection_docs_state1)
+            selection_docs_state1 = update_langchain_mode_paths(selection_docs_state1)
             df_langchain_mode_paths1 = get_df_langchain_mode_paths(selection_docs_state1)
             return selection_docs_state1, \
                 gr.update(choices=get_langchain_choices(selection_docs_state1),
                           value=langchain_mode1), df_langchain_mode_paths1
 
-        load_langchain.click(fn=update_langchain_gr,
-                             inputs=[my_db_state, selection_docs_state, langchain_mode],
-                             outputs=[selection_docs_state, langchain_mode, langchain_mode_path_text],
-                             api_name='load_langchain' if allow_api and allow_upload_to_user_data else None)
+        eventdbloadla = load_langchain.click(user_state_setup,
+                                             inputs=[my_db_state, requests_state, langchain_mode],
+                                             outputs=[my_db_state, requests_state, langchain_mode],
+                                             show_progress='minimal')
+        load_langchain_gr_func = functools.partial(load_langchain_gr,
+                                                   auth_filename=kwargs['auth_filename'])
+        eventdbloadlb = eventdbloadla.then(fn=load_langchain_gr_func,
+                                           inputs=[my_db_state, selection_docs_state, requests_state, langchain_mode],
+                                           outputs=[selection_docs_state, langchain_mode, langchain_mode_path_text],
+                                           api_name='load_langchain' if allow_api and allow_upload_to_user_data else None)
 
         inputs_list, inputs_dict = get_inputs_list(all_kwargs, kwargs['model_lower'], model_id=1)
         inputs_list2, inputs_dict2 = get_inputs_list(all_kwargs, kwargs['model_lower'], model_id=2)
@@ -1327,25 +2228,52 @@ def go_gradio(**kwargs):
         for k in inputs_kwargs_list:
             assert k in kwargs_evaluate, "Missing %s" % k
 
-        def evaluate_nochat(*args1, default_kwargs1=None, str_api=False, **kwargs1):
+        def evaluate_nochat(*args1, default_kwargs1=None, str_api=False, plain_api=False, **kwargs1):
             args_list = list(args1)
             if str_api:
+                if plain_api:
+                    # i.e. not fresh model, tells evaluate to use model_state0
+                    args_list.insert(0, kwargs['model_state_none'].copy())
+                    args_list.insert(1, my_db_state0.copy())
+                    args_list.insert(2, selection_docs_state0.copy())
+                    args_list.insert(3, requests_state0.copy())
                 user_kwargs = args_list[len(input_args_list)]
                 assert isinstance(user_kwargs, str)
                 user_kwargs = ast.literal_eval(user_kwargs)
             else:
+                assert not plain_api
                 user_kwargs = {k: v for k, v in zip(eval_func_param_names, args_list[len(input_args_list):])}
+            # control kwargs1 for evaluate
+            kwargs1['answer_with_sources'] = -1  # just text chunk, not URL etc.
+            kwargs1['show_accordions'] = False
+            kwargs1['append_sources_to_answer'] = False
+            kwargs1['show_link_in_sources'] = False
+            kwargs1['top_k_docs_max_show'] = 30
+
             # only used for submit_nochat_api
             user_kwargs['chat'] = False
             if 'stream_output' not in user_kwargs:
                 user_kwargs['stream_output'] = False
+            if plain_api:
+                user_kwargs['stream_output'] = False
             if 'langchain_mode' not in user_kwargs:
                 # if user doesn't specify, then assume disabled, not use default
-                user_kwargs['langchain_mode'] = 'Disabled'
+                if LangChainMode.LLM.value in kwargs['langchain_modes']:
+                    user_kwargs['langchain_mode'] = LangChainMode.LLM.value
+                elif len(kwargs['langchain_modes']) >= 1:
+                    user_kwargs['langchain_mode'] = kwargs['langchain_modes'][0]
+                else:
+                    # disabled should always be allowed
+                    user_kwargs['langchain_mode'] = LangChainMode.DISABLED.value
             if 'langchain_action' not in user_kwargs:
                 user_kwargs['langchain_action'] = LangChainAction.QUERY.value
             if 'langchain_agents' not in user_kwargs:
                 user_kwargs['langchain_agents'] = []
+            # be flexible
+            if 'instruction' in user_kwargs and 'instruction_nochat' not in user_kwargs:
+                user_kwargs['instruction_nochat'] = user_kwargs['instruction']
+            if 'iinput' in user_kwargs and 'iinput_nochat' not in user_kwargs:
+                user_kwargs['iinput_nochat'] = user_kwargs['iinput']
 
             set1 = set(list(default_kwargs1.keys()))
             set2 = set(eval_func_param_names)
@@ -1358,20 +2286,37 @@ def go_gradio(**kwargs):
             args_list = [user_kwargs[k] if k in user_kwargs and user_kwargs[k] is not None else default_kwargs1[k] for k
                          in eval_func_param_names]
             assert len(args_list) == len(eval_func_param_names)
+            stream_output1 = args_list[eval_func_param_names.index('stream_output')]
             args_list = [model_state1, my_db_state1, selection_docs_state1, requests_state1] + args_list
 
+            save_dict = dict()
+            error = ''
+            extra = ''
+            ret = {}
             try:
                 for res_dict in evaluate(*tuple(args_list), **kwargs1):
+                    error = res_dict.get('error')
+                    extra = res_dict.get('extra')
+                    save_dict = res_dict.get('save_dict')
                     if str_api:
                         # full return of dict
-                        yield res_dict
+                        ret = res_dict
                     elif kwargs['langchain_mode'] == 'Disabled':
-                        yield fix_text_for_gradio(res_dict['response'])
+                        ret = fix_text_for_gradio(res_dict['response'])
                     else:
-                        yield '<br>' + fix_text_for_gradio(res_dict['response'])
+                        ret = '<br>' + fix_text_for_gradio(res_dict['response'])
+                    if stream_output1:
+                        # yield as it goes, else need to wait since predict only returns first yield
+                        yield ret
             finally:
                 clear_torch_cache()
                 clear_embeddings(user_kwargs['langchain_mode'], my_db_state1)
+                save_dict['error'] = error
+                save_dict['extra'] = extra
+            save_generate_output(**save_dict)
+            if not stream_output1:
+                # return back last ret
+                yield ret
 
         kwargs_evaluate_nochat = kwargs_evaluate.copy()
         # nominally never want sources appended for API calls, which is what nochat used for primarily
@@ -1390,11 +2335,18 @@ def go_gradio(**kwargs):
                                     **kwargs_evaluate_nochat
                                     )
 
+        fun_with_dict_str_plain = partial(evaluate_nochat,
+                                    default_kwargs1=default_kwargs,
+                                    str_api=True,
+                                    plain_api=True,
+                                    **kwargs_evaluate_nochat
+                                    )
+
         dark_mode_btn.click(
             None,
             None,
             None,
-            _js=wrap_js_to_lambda(get_dark_js()),
+            _js=wrap_js_to_lambda(0, get_dark_js()),
             api_name="dark" if allow_api else None,
             queue=False,
         )
@@ -1564,8 +2516,10 @@ def go_gradio(**kwargs):
             else:
                 user_message1 = user_message
             if sanitize_user_prompt:
-                from better_profanity import profanity
-                user_message1 = profanity.censor(user_message1)
+                pass
+                # requirements.txt has comment that need to re-enable the below 2 lines
+                # from better_profanity import profanity
+                # user_message1 = profanity.censor(user_message1)
 
             history = args_list[-1]
             if history is None:
@@ -1676,17 +2630,18 @@ def go_gradio(**kwargs):
             # apply back to args_list for evaluate()
             args_list[eval_func_param_names.index('prompt_type')] = prompt_type1
             args_list[eval_func_param_names.index('prompt_dict')] = prompt_dict1
+            context1 = args_list[eval_func_param_names.index('context')]
 
             chat1 = args_list[eval_func_param_names.index('chat')]
             model_max_length1 = get_model_max_length(model_state1)
-            context1 = history_to_context(history, langchain_mode1,
+            context2 = history_to_context(history, langchain_mode1,
                                           add_chat_history_to_context1,
                                           prompt_type1, prompt_dict1, chat1,
                                           model_max_length1, memory_restriction_level,
                                           kwargs['keep_sources_in_context'],
                                           kwargs['use_system_prompt'])
             args_list[0] = instruction1  # override original instruction with history from user
-            args_list[2] = context1
+            args_list[2] = context1 + context2
 
             fun1 = partial(evaluate,
                            model_state1,
@@ -1747,18 +2702,20 @@ def go_gradio(**kwargs):
         def clear_embeddings(langchain_mode1, db1s):
             # clear any use of embedding that sits on GPU, else keeps accumulating GPU usage even if clear torch cache
             if db_type == 'chroma' and langchain_mode1 not in ['LLM', 'Disabled', None, '']:
-                from gpt_langchain import clear_embedding
+                from gpt_langchain import clear_embedding, length_db1
                 db = dbs.get('langchain_mode1')
                 if db is not None and not isinstance(db, str):
                     clear_embedding(db)
                 if db1s is not None and langchain_mode1 in db1s:
                     db1 = db1s[langchain_mode1]
-                    if len(db1) == 2:
+                    if len(db1) == length_db1():
                         clear_embedding(db1[0])
 
         def bot(*args, retry=False):
             history, fun1, langchain_mode1, db1, requests_state1 = prep_bot(*args, retry=retry)
             save_dict = dict()
+            error = ''
+            extra = ''
             try:
                 for res in get_response(fun1, history):
                     history, error, extra, save_dict = res
@@ -1771,6 +2728,8 @@ def go_gradio(**kwargs):
                 if 'extra_dict' not in save_dict:
                     save_dict['extra_dict'] = {}
                 save_dict['extra_dict'].update(requests_state1)
+            save_dict['error'] = error
+            save_dict['extra'] = extra
             save_generate_output(**save_dict)
 
         def all_bot(*args, retry=False, model_states1=None):
@@ -1784,6 +2743,8 @@ def go_gradio(**kwargs):
             isize = len(input_args_list) + 1  # states + chat history
             db1s = None
             requests_state1 = None
+            extras = []
+            exceptions = []
             save_dicts = []
             try:
                 gen_list = []
@@ -1853,17 +2814,19 @@ def go_gradio(**kwargs):
                     else:
                         yield bots[0], exceptions_str
                 if exceptions:
-                    exceptions = [x for x in exceptions if x not in ['', None, 'None']]
-                    if exceptions:
-                        print("Generate exceptions: %s" % exceptions, flush=True)
+                    exceptions_reduced = [x for x in exceptions if x not in ['', None, 'None']]
+                    if exceptions_reduced:
+                        print("Generate exceptions: %s" % exceptions_reduced, flush=True)
             finally:
                 clear_torch_cache()
                 clear_embeddings(langchain_mode1, db1s)
-            for save_dict in save_dicts:
+            for extra, error, save_dict in zip(extras, exceptions, save_dicts):
                 if requests_state1:
                     if 'extra_dict' not in save_dict:
                         save_dict['extra_dict'] = {}
                     save_dict['extra_dict'].update(requests_state1)
+                save_dict['error'] = error
+                save_dict['extra'] = extra
                 save_generate_output(**save_dict)
 
         # NORMAL MODEL
@@ -1956,29 +2919,19 @@ def go_gradio(**kwargs):
             return gr.Textbox.update(value=''), gr.Textbox.update(value=''), gr.update(value=None), \
                 gr.Textbox.update(value=''), gr.Textbox.update(value='')
 
-        def dummy_fun2(x, request: gr.Request):
-            requests_state1 = requests_state0
-            if requests:
-                if hasattr(request, 'headers'):
-                    requests_state1.update(request.headers)
-                if hasattr(request, 'host'):
-                    requests_state1.update(dict(host2=request.client.host))
-                if hasattr(request, 'username'):
-                    requests_state1.update(dict(username=request.username))
-            return x, {str(k): str(v) for k, v in requests_state1.items()}
-
         if kwargs['model_states']:
             submits1 = submits2 = submits3 = []
             submits4 = []
 
+            triggers = [instruction, submit, retry_btn]
             fun_source = [instruction.submit, submit.click, retry_btn.click]
             fun_name = ['instruction', 'submit', 'retry']
             user_args = [all_user_args, all_user_args, all_retry_user_args]
             bot_args = [all_bot_args, all_bot_args, all_retry_bot_args]
-            for userargs1, botarg1, funn1, funs1 in zip(user_args, bot_args, fun_name, fun_source):
-                submit_event11 = funs1(fn=dummy_fun2,
-                                       inputs=instruction,
-                                       outputs=[instruction, requests_state],
+            for userargs1, botarg1, funn1, funs1, trigger1, in zip(user_args, bot_args, fun_name, fun_source, triggers):
+                submit_event11 = funs1(fn=user_state_setup,
+                                       inputs=[my_db_state, requests_state, trigger1, trigger1],
+                                       outputs=[my_db_state, requests_state, trigger1],
                                        queue=queue)
                 submit_event1a = submit_event11.then(**userargs1, queue=queue,
                                                      api_name='%s' % funn1 if allow_api else None)
@@ -1997,9 +2950,9 @@ def go_gradio(**kwargs):
                 submits1.extend([submit_event1a, submit_event1b, submit_event1c, submit_event1d])
 
             # if undo, no longer the saved chat
-            submit_event4 = undo.click(fn=dummy_fun2,
-                                       inputs=instruction,
-                                       outputs=[instruction, requests_state],
+            submit_event4 = undo.click(fn=user_state_setup,
+                                       inputs=[my_db_state, requests_state, undo, undo],
+                                       outputs=[my_db_state, requests_state, undo],
                                        queue=queue) \
                 .then(**all_undo_user_args, api_name='undo' if allow_api else None) \
                 .then(clear_all, inputs=None, outputs=[instruction, iinput, radio_chats, score_text,
@@ -2010,9 +2963,9 @@ def go_gradio(**kwargs):
         else:
             # in case 2nd model, consume instruction first, so can clear quickly
             # bot doesn't consume instruction itself, just history from user, so why works
-            submit_event11 = instruction.submit(fn=dummy_fun2,
-                                                inputs=instruction,
-                                                outputs=[instruction, requests_state],
+            submit_event11 = instruction.submit(fn=user_state_setup,
+                                                inputs=[my_db_state, requests_state, instruction, instruction],
+                                                outputs=[my_db_state, requests_state, instruction],
                                                 queue=queue)
             submit_event1a = submit_event11.then(**user_args, queue=queue,
                                                  api_name='instruction' if allow_api else None)
@@ -2035,9 +2988,9 @@ def go_gradio(**kwargs):
                         submit_event1e,
                         submit_event1f, submit_event1g]
 
-            submit_event21 = submit.click(fn=dummy_fun2,
-                                          inputs=instruction,
-                                          outputs=[instruction, requests_state],
+            submit_event21 = submit.click(fn=user_state_setup,
+                                          inputs=[my_db_state, requests_state, submit, submit],
+                                          outputs=[my_db_state, requests_state, submit],
                                           queue=queue)
             submit_event2a = submit_event21.then(**user_args, api_name='submit' if allow_api else None)
             # if submit new query, no longer the saved chat
@@ -2060,9 +3013,9 @@ def go_gradio(**kwargs):
                         submit_event2e,
                         submit_event2f, submit_event2g]
 
-            submit_event31 = retry_btn.click(fn=dummy_fun2,
-                                             inputs=instruction,
-                                             outputs=[instruction, requests_state],
+            submit_event31 = retry_btn.click(fn=user_state_setup,
+                                             inputs=[my_db_state, requests_state, retry_btn, retry_btn],
+                                             outputs=[my_db_state, requests_state, retry_btn],
                                              queue=queue)
             submit_event3a = submit_event31.then(**user_args, api_name='retry' if allow_api else None)
             # if retry, no longer the saved chat
@@ -2086,9 +3039,9 @@ def go_gradio(**kwargs):
                         submit_event3f, submit_event3g]
 
             # if undo, no longer the saved chat
-            submit_event4 = undo.click(fn=dummy_fun2,
-                                       inputs=instruction,
-                                       outputs=[instruction, requests_state],
+            submit_event4 = undo.click(fn=user_state_setup,
+                                       inputs=[my_db_state, requests_state, undo, undo],
+                                       outputs=[my_db_state, requests_state, undo],
                                        queue=queue) \
                 .then(**undo_user_args, api_name='undo' if allow_api else None) \
                 .then(**undo_user_args2, api_name='undo2' if allow_api else None) \
@@ -2155,8 +3108,11 @@ def go_gradio(**kwargs):
                         return False
             return is_same
 
-        def save_chat(*args, chat_is_list=False):
+        def save_chat(*args, chat_is_list=False, auth_filename=None, auth_freeze=None):
             args_list = list(args)
+            db1s = args_list[0]
+            requests_state1 = args_list[1]
+            args_list = args_list[2:]
             if not chat_is_list:
                 # list of chatbot histories,
                 # can't pass in list with list of chatbot histories and state due to gradio limits
@@ -2190,6 +3146,13 @@ def go_gradio(**kwargs):
             choices = list(chat_state1.keys()).copy()
             choices.reverse()
 
+            # save saved chats and chatbots to auth file
+            text_output1 = chat_list[0]
+            text_output21 = chat_list[1]
+            text_outputs1 = chat_list[2:]
+            save_auth(requests_state1, auth_filename, auth_freeze, chat_state1=chat_state1,
+                      text_output1=text_output1, text_output21=text_output21, text_outputs1=text_outputs1)
+
             return chat_state1, gr.update(choices=choices, value=None)
 
         def switch_chat(chat_key, chat_state1, num_model_lock=0):
@@ -2220,7 +3183,8 @@ def go_gradio(**kwargs):
             return gr.update(choices=list(chat_state1.keys()), value=None), chat_state1
 
         remove_chat_event = remove_chat_btn.click(remove_chat,
-                                                  inputs=[radio_chats, chat_state], outputs=[radio_chats, chat_state],
+                                                  inputs=[radio_chats, chat_state],
+                                                  outputs=[radio_chats, chat_state],
                                                   queue=False, api_name='remove_chat')
 
         def get_chats1(chat_state1):
@@ -2234,7 +3198,8 @@ def go_gradio(**kwargs):
         export_chat_event = export_chats_btn.click(get_chats1, inputs=chat_state, outputs=chats_file, queue=False,
                                                    api_name='export_chats' if allow_api else None)
 
-        def add_chats_from_file(file, chat_state1, radio_chats1, chat_exception_text1):
+        def add_chats_from_file(db1s, requests_state1, file, chat_state1, radio_chats1, chat_exception_text1,
+                                auth_filename=None, auth_freeze=None):
             if not file:
                 return None, chat_state1, gr.update(choices=list(chat_state1.keys()), value=None), chat_exception_text1
             if isinstance(file, str):
@@ -2260,16 +3225,27 @@ def go_gradio(**kwargs):
                     print(ex_str, flush=True)
                     chat_exception_list.append(ex_str)
                     chat_exception_text1 = '\n'.join(chat_exception_list)
+            # save chat to auth file
+            save_auth(requests_state1, auth_filename, auth_freeze, chat_state1=chat_state1)
             return None, chat_state1, gr.update(choices=list(chat_state1.keys()), value=None), chat_exception_text1
 
         # note for update_user_db_func output is ignored for db
-        chatup_change_event = chatsup_output.change(add_chats_from_file,
-                                                    inputs=[chatsup_output, chat_state, radio_chats,
-                                                            chat_exception_text],
-                                                    outputs=[chatsup_output, chat_state, radio_chats,
-                                                             chat_exception_text],
-                                                    queue=False,
-                                                    api_name='add_to_chats' if allow_api else None)
+        chatup_change_eventa = chatsup_output.change(user_state_setup,
+                                                     inputs=[my_db_state, requests_state, langchain_mode],
+                                                     outputs=[my_db_state, requests_state, langchain_mode],
+                                                     show_progress='minimal')
+        add_chats_from_file_func = functools.partial(add_chats_from_file,
+                                                     auth_filename=kwargs['auth_filename'],
+                                                     auth_freeze=kwargs['auth_freeze'],
+                                                     )
+        chatup_change_event = chatup_change_eventa.then(add_chats_from_file_func,
+                                                        inputs=[my_db_state, requests_state] +
+                                                               [chatsup_output, chat_state, radio_chats,
+                                                                chat_exception_text],
+                                                        outputs=[chatsup_output, chat_state, radio_chats,
+                                                                 chat_exception_text],
+                                                        queue=False,
+                                                        api_name='add_to_chats' if allow_api else None)
 
         clear_chat_event = clear_chat_btn.click(fn=clear_texts,
                                                 inputs=[text_output, text_output2] + text_outputs,
@@ -2278,10 +3254,20 @@ def go_gradio(**kwargs):
             .then(deselect_radio_chats, inputs=None, outputs=radio_chats, queue=False) \
             .then(clear_scores, outputs=[score_text, score_text2, score_text_nochat])
 
-        clear_event = save_chat_btn.click(save_chat,
-                                          inputs=[text_output, text_output2] + text_outputs + [chat_state],
-                                          outputs=[chat_state, radio_chats],
-                                          api_name='save_chat' if allow_api else None)
+        clear_eventa = save_chat_btn.click(user_state_setup,
+                                           inputs=[my_db_state, requests_state, langchain_mode],
+                                           outputs=[my_db_state, requests_state, langchain_mode],
+                                           show_progress='minimal')
+        save_chat_func = functools.partial(save_chat,
+                                           auth_filename=kwargs['auth_filename'],
+                                           auth_freeze=kwargs['auth_freeze'],
+                                           )
+        clear_event = clear_eventa.then(save_chat_func,
+                                        inputs=[my_db_state, requests_state] +
+                                               [text_output, text_output2] + text_outputs +
+                                               [chat_state],
+                                        outputs=[chat_state, radio_chats],
+                                        api_name='save_chat' if allow_api else None)
         if kwargs['score_model']:
             clear_event2 = clear_event.then(clear_scores, outputs=[score_text, score_text2, score_text_nochat])
 
@@ -2313,10 +3299,33 @@ def go_gradio(**kwargs):
                                                           outputs=text_output_nochat_api,
                                                           queue=True,  # required for generator
                                                           api_name='submit_nochat_api' if allow_api else None) \
-            .then(clear_torch_cache)
 
-        def load_model(model_name, lora_weights, server_name, model_state_old, prompt_type_old, load_8bit,
-                       use_gpu_id, gpu_id):
+        submit_event_nochat_api_plain = submit_nochat_api.click(fun_with_dict_str_plain,
+                                                          inputs=inputs_dict_str,
+                                                          outputs=text_output_nochat_api,
+                                                          queue=False,
+                                                          api_name='submit_nochat_plain_api' if allow_api else None) \
+
+
+        def load_model(model_name, lora_weights, server_name, model_state_old, prompt_type_old,
+                       load_8bit, load_4bit, low_bit_mode,
+                       load_gptq, load_exllama, use_safetensors, revision,
+                       use_gpu_id, gpu_id, max_seq_len1, rope_scaling1,
+                       model_path_llama1, model_name_gptj1, model_name_gpt4all_llama1,
+                       n_gpu_layers1, n_batch1, n_gqa1, llamacpp_dict_more1):
+            try:
+                llamacpp_dict = ast.literal_eval(llamacpp_dict_more1)
+            except:
+                print("Failed to use user input for llamacpp_dict_more1 dict", flush=True)
+                llamacpp_dict = {}
+            llamacpp_dict.update(dict(model_path_llama=model_path_llama1,
+                                      model_name_gptj=model_name_gptj1,
+                                      model_name_gpt4all_llama=model_name_gpt4all_llama1,
+                                      n_gpu_layers=n_gpu_layers1,
+                                      n_batch=n_batch1,
+                                      n_gqa=n_gqa1,
+                                      ))
+
             # ensure no API calls reach here
             if is_public:
                 raise RuntimeError("Illegal access for %s" % model_name)
@@ -2349,13 +3358,14 @@ def go_gradio(**kwargs):
             clear_torch_cache()
             if kwargs['debug']:
                 print("Pre-switch post-del GPU memory: %s" % get_torch_allocated(), flush=True)
-
-            if model_name is None or model_name == no_model_str:
+            if not model_name:
+                model_name = no_model_str
+            if model_name == no_model_str:
                 # no-op if no model, just free memory
                 # no detranscribe needed for model, never go into evaluate
                 lora_weights = no_lora_str
                 server_name = no_server_str
-                return [None, None, None, model_name, server_name], \
+                return kwargs['model_state_none'].copy(), \
                     model_name, lora_weights, server_name, prompt_type_old, \
                     gr.Slider.update(maximum=256), \
                     gr.Slider.update(maximum=256)
@@ -2364,8 +3374,21 @@ def go_gradio(**kwargs):
             all_kwargs1 = all_kwargs.copy()
             all_kwargs1['base_model'] = model_name.strip()
             all_kwargs1['load_8bit'] = load_8bit
+            all_kwargs1['load_4bit'] = load_4bit
+            all_kwargs1['low_bit_mode'] = low_bit_mode
+            all_kwargs1['load_gptq'] = load_gptq
+            all_kwargs1['load_exllama'] = load_exllama
+            all_kwargs1['use_safetensors'] = use_safetensors
+            all_kwargs1['revision'] = None if not revision else revision  # transcribe, don't pass ''
             all_kwargs1['use_gpu_id'] = use_gpu_id
             all_kwargs1['gpu_id'] = int(gpu_id) if gpu_id not in [None, 'None'] else None  # detranscribe
+            all_kwargs1['llamacpp_dict'] = llamacpp_dict
+            all_kwargs1['max_seq_len'] = max_seq_len1
+            try:
+                all_kwargs1['rope_scaling'] = ast.literal_eval(rope_scaling1)  # transcribe
+            except:
+                print("Failed to use user input for rope_scaling dict", flush=True)
+                all_kwargs1['rope_scaling'] = {}
             model_lower = model_name.strip().lower()
             if model_lower in inv_prompt_type_to_model_lower:
                 prompt_type1 = inv_prompt_type_to_model_lower[model_lower]
@@ -2429,7 +3452,13 @@ def go_gradio(**kwargs):
 
         load_model_args = dict(fn=load_model,
                                inputs=[model_choice, lora_choice, server_choice, model_state, prompt_type,
-                                       model_load8bit_checkbox, model_use_gpu_id_checkbox, model_gpu],
+                                       model_load8bit_checkbox, model_load4bit_checkbox, model_low_bit_mode,
+                                       model_load_gptq, model_load_exllama_checkbox,
+                                       model_safetensors_checkbox, model_revision,
+                                       model_use_gpu_id_checkbox, model_gpu,
+                                       max_seq_len, rope_scaling,
+                                       model_path_llama, model_name_gptj, model_name_gpt4all_llama,
+                                       n_gpu_layers, n_batch, n_gqa, llamacpp_dict_more],
                                outputs=[model_state, model_used, lora_used, server_used,
                                         # if prompt_type changes, prompt_dict will change via change rule
                                         prompt_type, max_new_tokens, min_new_tokens,
@@ -2438,7 +3467,7 @@ def go_gradio(**kwargs):
         chatbot_update_args = dict(fn=chatbot_list, inputs=[text_output, model_used], outputs=text_output)
         nochat_update_args = dict(fn=chatbot_list, inputs=[text_output_nochat, model_used], outputs=text_output_nochat)
         load_model_event = load_model_button.click(**load_model_args,
-                                                   api_name='load_model' if allow_api and is_public else None) \
+                                                   api_name='load_model' if allow_api and not is_public else None) \
             .then(**prompt_update_args) \
             .then(**chatbot_update_args) \
             .then(**nochat_update_args) \
@@ -2446,7 +3475,13 @@ def go_gradio(**kwargs):
 
         load_model_args2 = dict(fn=load_model,
                                 inputs=[model_choice2, lora_choice2, server_choice2, model_state2, prompt_type2,
-                                        model_load8bit_checkbox2, model_use_gpu_id_checkbox2, model_gpu2],
+                                        model_load8bit_checkbox2, model_load4bit_checkbox2, model_low_bit_mode2,
+                                        model_load_gptq2, model_load_exllama_checkbox2,
+                                        model_safetensors_checkbox2, model_revision2,
+                                        model_use_gpu_id_checkbox2, model_gpu2,
+                                        max_seq_len2, rope_scaling2,
+                                        model_path_llama2, model_name_gptj2, model_name_gpt4all_llama2,
+                                        n_gpu_layers2, n_batch2, n_gqa2, llamacpp_dict_more2],
                                 outputs=[model_state2, model_used2, lora_used2, server_used2,
                                          # if prompt_type2 changes, prompt_dict2 will change via change rule
                                          prompt_type2, max_new_tokens2, min_new_tokens2
@@ -2454,7 +3489,7 @@ def go_gradio(**kwargs):
         prompt_update_args2 = dict(fn=dropdown_prompt_type_list, inputs=prompt_type2, outputs=prompt_type2)
         chatbot_update_args2 = dict(fn=chatbot_list, inputs=[text_output2, model_used2], outputs=text_output2)
         load_model_event2 = load_model_button2.click(**load_model_args2,
-                                                     api_name='load_model2' if allow_api and is_public else None) \
+                                                     api_name='load_model2' if allow_api and not is_public else None) \
             .then(**prompt_update_args2) \
             .then(**chatbot_update_args2) \
             .then(clear_torch_cache)
@@ -2467,6 +3502,9 @@ def go_gradio(**kwargs):
                                             ):
             model_new_state = [model_list0[0] + [model_x]]
             model_new_options = [*model_new_state[0]]
+            if no_model_str in model_new_options:
+                model_new_options.remove(no_model_str)
+            model_new_options = [no_model_str] + sorted(model_new_options)
             x1 = model_x if model_used1 == no_model_str else model_used1
             x2 = model_x if model_used2 == no_model_str else model_used2
             ret1 = [gr.Dropdown.update(value=x1, choices=model_new_options),
@@ -2475,6 +3513,9 @@ def go_gradio(**kwargs):
 
             lora_new_state = [lora_list0[0] + [lora_x]]
             lora_new_options = [*lora_new_state[0]]
+            if no_lora_str in lora_new_options:
+                lora_new_options.remove(no_lora_str)
+            lora_new_options = [no_lora_str] + sorted(lora_new_options)
             # don't switch drop-down to added lora if already have model loaded
             x1 = lora_x if model_used1 == no_model_str else lora_used1
             x2 = lora_x if model_used2 == no_model_str else lora_used2
@@ -2484,6 +3525,9 @@ def go_gradio(**kwargs):
 
             server_new_state = [server_list0[0] + [server_x]]
             server_new_options = [*server_new_state[0]]
+            if no_server_str in server_new_options:
+                server_new_options.remove(no_server_str)
+            server_new_options = [no_server_str] + sorted(server_new_options)
             # don't switch drop-down to added server if already have model loaded
             x1 = server_x if model_used1 == no_model_str else server_used1
             x2 = server_x if model_used2 == no_model_str else server_used2
@@ -2626,8 +3670,13 @@ def go_gradio(**kwargs):
                        cancels=submits1 + submits2 + submits3 + submits4 +
                                [submit_event_nochat, submit_event_nochat2] +
                                [eventdb1, eventdb2, eventdb3] +
-                               [eventdb7, eventdb8, eventdb9, eventdb12] +
+                               [eventdb7a, eventdb7, eventdb8a, eventdb8, eventdb9a, eventdb9, eventdb12a, eventdb12] +
+                               [eventdb90a, eventdb90] +
                                db_events +
+                               [eventdb20a, eventdb20b] +
+                               [eventdb21a, eventdb21b] +
+                               [eventdb22a, eventdb22b] +
+                               [eventdbloadla, eventdbloadlb] +
                                [clear_event] +
                                [submit_event_nochat_api, submit_event_nochat] +
                                [load_model_event, load_model_event2] +
@@ -2635,16 +3684,41 @@ def go_gradio(**kwargs):
                        ,
                        queue=False, api_name='stop' if allow_api else None).then(clear_torch_cache, queue=False)
 
+        if kwargs['auth'] is not None:
+            auth = authf
+            load_func = user_state_setup
+            load_inputs = [my_db_state, requests_state, login_btn, login_btn]
+            load_outputs = [my_db_state, requests_state, login_btn]
+        else:
+            auth = None
+            load_func, load_inputs, load_outputs = None, None, None
+
         app_js = wrap_js_to_lambda(
+            len(load_inputs) if load_inputs else 0,
             get_dark_js() if kwargs['dark'] else None,
             get_heap_js(heap_app_id) if is_heap_analytics_enabled else None)
-        demo.load(None, None, None, _js=app_js)
+
+        load_event = demo.load(fn=load_func, inputs=load_inputs, outputs=load_outputs, _js=app_js)
+
+        if load_func:
+            load_event2 = load_event.then(load_login_func,
+                                          inputs=login_inputs,
+                                          outputs=login_outputs)
 
     demo.queue(concurrency_count=kwargs['concurrency_count'], api_open=kwargs['api_open'])
-    favicon_path = "h2o-logo.svg"
-    if not os.path.isfile(favicon_path):
-        print("favicon_path=%s not found" % favicon_path, flush=True)
-        favicon_path = None
+    favicon_file = "h2o-logo.svg"
+    favicon_path = favicon_file
+    if not os.path.isfile(favicon_file):
+        print("favicon_path1=%s not found" % favicon_file, flush=True)
+        alt_path = os.path.dirname(os.path.abspath(__file__))
+        favicon_path = os.path.join(alt_path, favicon_file)
+        if not os.path.isfile(favicon_path):
+            print("favicon_path2: %s not found in %s" % (favicon_file, alt_path), flush=True)
+            alt_path = os.path.dirname(alt_path)
+            favicon_path = os.path.join(alt_path, favicon_file)
+            if not os.path.isfile(favicon_path):
+                print("favicon_path3: %s not found in %s" % (favicon_file, alt_path), flush=True)
+                favicon_path = None
 
     scheduler = BackgroundScheduler()
     scheduler.add_job(func=clear_torch_cache, trigger="interval", seconds=20)
@@ -2666,15 +3740,23 @@ def go_gradio(**kwargs):
 
     # set port in case GRADIO_SERVER_PORT was already set in prior main() call,
     # gradio does not listen if change after import
+    # Keep None if not set so can find an open port above used ports
     server_port = os.getenv('GRADIO_SERVER_PORT')
     if server_port is not None:
         server_port = int(server_port)
-    demo.launch(share=kwargs['share'], server_name="0.0.0.0", show_error=True,
+
+    demo.launch(share=kwargs['share'],
+                server_name=kwargs['server_name'],
+                show_error=True,
                 server_port=server_port,
-                favicon_path=favicon_path, prevent_thread_lock=True,
-                auth=kwargs['auth'], root_path=kwargs['root_path'])
-    if kwargs['verbose']:
-        print("Started GUI", flush=True)
+                favicon_path=favicon_path,
+                prevent_thread_lock=True,
+                auth=auth,
+                auth_message=auth_message,
+                root_path=kwargs['root_path'])
+    if kwargs['verbose'] or not (kwargs['base_model'] in ['gptj', 'gpt4all_llama']):
+        print("Started Gradio Server and/or GUI: server_name: %s port: %s" % (kwargs['server_name'], server_port),
+              flush=True)
     if kwargs['block_gradio_exit']:
         demo.block_thread()
 
@@ -2712,412 +3794,189 @@ def get_inputs_list(inputs_dict, model_lower, model_id=1):
     return inputs_list, inputs_dict_out
 
 
-def get_sources(db1s, langchain_mode, dbs=None, docs_state0=None):
-    for k in db1s:
-        set_userid(db1s[k])
+def update_user_db_gr(file, db1s, selection_docs_state1, requests_state1,
+                      langchain_mode, chunk, chunk_size, embed,
 
-    if langchain_mode in ['LLM']:
-        source_files_added = "NA"
-        source_list = []
-    elif langchain_mode in ['wiki_full']:
-        source_files_added = "Not showing wiki_full, takes about 20 seconds and makes 4MB file." \
-                             "  Ask jon.mckinney@h2o.ai for file if required."
-        source_list = []
-    elif langchain_mode in db1s and len(db1s[langchain_mode]) == 2 and db1s[langchain_mode][0] is not None:
-        db1 = db1s[langchain_mode]
-        from gpt_langchain import get_metadatas
-        metadatas = get_metadatas(db1[0])
-        source_list = sorted(set([x['source'] for x in metadatas]))
-        source_files_added = '\n'.join(source_list)
-    elif langchain_mode in dbs and dbs[langchain_mode] is not None:
-        from gpt_langchain import get_metadatas
-        db1 = dbs[langchain_mode]
-        metadatas = get_metadatas(db1)
-        source_list = sorted(set([x['source'] for x in metadatas]))
-        source_files_added = '\n'.join(source_list)
-    else:
-        source_list = []
-        source_files_added = "None"
-    sources_dir = "sources_dir"
-    sources_dir = makedirs(sources_dir, exist_ok=True, tmp_ok=True, use_base=True)
-    sources_file = os.path.join(sources_dir, 'sources_%s_%s' % (langchain_mode, str(uuid.uuid4())))
-    with open(sources_file, "wt") as f:
-        f.write(source_files_added)
-    source_list = docs_state0 + source_list
+                      image_loaders,
+                      pdf_loaders,
+                      url_loaders,
+                      jq_schema,
+
+                      captions_model=None,
+                      caption_loader=None,
+
+                      dbs=None,
+                      get_userid_auth=None,
+                      **kwargs):
+    loaders_dict, captions_model = gr_to_lg(image_loaders,
+                                            pdf_loaders,
+                                            url_loaders,
+                                            captions_model=captions_model,
+                                            **kwargs,
+                                            )
+    if jq_schema is None:
+        jq_schema = kwargs['jq_schema0']
+    loaders_dict.update(dict(captions_model=captions_model,
+                             caption_loader=caption_loader,
+                             jq_schema=jq_schema,
+                             ))
+    kwargs.pop('image_loaders_options0', None)
+    kwargs.pop('pdf_loaders_options0', None)
+    kwargs.pop('url_loaders_options0', None)
+    kwargs.pop('jq_schema0', None)
+    if not embed:
+        kwargs['use_openai_embedding'] = False
+        kwargs['hf_embedding_model'] = 'fake'
+        kwargs['migrate_embedding_model'] = False
+
+    from src.gpt_langchain import update_user_db
+    return update_user_db(file, db1s, selection_docs_state1, requests_state1,
+                          langchain_mode=langchain_mode, chunk=chunk, chunk_size=chunk_size,
+                          **loaders_dict,
+                          dbs=dbs,
+                          get_userid_auth=get_userid_auth,
+                          **kwargs)
+
+
+def get_sources_gr(db1s, selection_docs_state1, requests_state1, langchain_mode, dbs=None, docs_state0=None,
+                   load_db_if_exists=None,
+                   db_type=None,
+                   use_openai_embedding=None,
+                   hf_embedding_model=None,
+                   migrate_embedding_model=None,
+                   verbose=False,
+                   get_userid_auth=None,
+                   api=False):
+    from src.gpt_langchain import get_sources
+    sources_file, source_list, db = get_sources(db1s, selection_docs_state1, requests_state1, langchain_mode,
+                                                dbs=dbs, docs_state0=docs_state0,
+                                                load_db_if_exists=load_db_if_exists,
+                                                db_type=db_type,
+                                                use_openai_embedding=use_openai_embedding,
+                                                hf_embedding_model=hf_embedding_model,
+                                                migrate_embedding_model=migrate_embedding_model,
+                                                verbose=verbose,
+                                                get_userid_auth=get_userid_auth,
+                                                )
+    if api:
+        return source_list
     return sources_file, source_list
 
 
-def set_userid(db1):
-    # can only call this after function called so for specific userr, not in gr.State() that occurs during app init
-    assert db1 is not None and len(db1) == 2
-    if db1[1] is None:
-        #  uuid in db is used as user ID
-        db1[1] = str(uuid.uuid4())
+def get_source_files_given_langchain_mode_gr(db1s, selection_docs_state1, requests_state1,
+                                             langchain_mode,
+                                             dbs=None,
+                                             load_db_if_exists=None,
+                                             db_type=None,
+                                             use_openai_embedding=None,
+                                             hf_embedding_model=None,
+                                             migrate_embedding_model=None,
+                                             verbose=False,
+                                             get_userid_auth=None):
+    from src.gpt_langchain import get_source_files_given_langchain_mode
+    return get_source_files_given_langchain_mode(db1s, selection_docs_state1, requests_state1, None,
+                                                 langchain_mode,
+                                                 dbs=dbs,
+                                                 load_db_if_exists=load_db_if_exists,
+                                                 db_type=db_type,
+                                                 use_openai_embedding=use_openai_embedding,
+                                                 hf_embedding_model=hf_embedding_model,
+                                                 migrate_embedding_model=migrate_embedding_model,
+                                                 verbose=verbose,
+                                                 get_userid_auth=get_userid_auth,
+                                                 delete_sources=False)
 
 
-def update_user_db(file, db1s, selection_docs_state1, chunk, chunk_size, langchain_mode, dbs=None, **kwargs):
-    kwargs.update(selection_docs_state1)
-    if file is None:
-        raise RuntimeError("Don't use change, use input")
-
-    try:
-        return _update_user_db(file, db1s=db1s, chunk=chunk, chunk_size=chunk_size,
-                               langchain_mode=langchain_mode, dbs=dbs,
-                               **kwargs)
-    except BaseException as e:
-        print(traceback.format_exc(), flush=True)
-        # gradio has issues if except, so fail semi-gracefully, else would hang forever in processing textbox
-        ex_str = "Exception: %s" % str(e)
-        source_files_added = """\
-        <html>
-          <body>
-            <p>
-               Sources: <br>
-            </p>
-               <div style="overflow-y: auto;height:400px">
-               {0}
-               </div>
-          </body>
-        </html>
-        """.format(ex_str)
-        doc_exception_text = str(e)
-        return None, langchain_mode, source_files_added, doc_exception_text
-    finally:
-        clear_torch_cache()
+def del_source_files_given_langchain_mode_gr(db1s, selection_docs_state1, requests_state1, document_choice1,
+                                             langchain_mode,
+                                             dbs=None,
+                                             load_db_if_exists=None,
+                                             db_type=None,
+                                             use_openai_embedding=None,
+                                             hf_embedding_model=None,
+                                             migrate_embedding_model=None,
+                                             verbose=False,
+                                             get_userid_auth=None):
+    from src.gpt_langchain import get_source_files_given_langchain_mode
+    return get_source_files_given_langchain_mode(db1s, selection_docs_state1, requests_state1, document_choice1,
+                                                 langchain_mode,
+                                                 dbs=dbs,
+                                                 load_db_if_exists=load_db_if_exists,
+                                                 db_type=db_type,
+                                                 use_openai_embedding=use_openai_embedding,
+                                                 hf_embedding_model=hf_embedding_model,
+                                                 migrate_embedding_model=migrate_embedding_model,
+                                                 verbose=verbose,
+                                                 get_userid_auth=get_userid_auth,
+                                                 delete_sources=True)
 
 
-def get_lock_file(db1, langchain_mode):
-    set_userid(db1)
-    assert len(db1) == 2 and db1[1] is not None and isinstance(db1[1], str)
-    user_id = db1[1]
-    base_path = 'locks'
-    base_path = makedirs(base_path, exist_ok=True, tmp_ok=True, use_base=True)
-    lock_file = os.path.join(base_path, "db_%s_%s.lock" % (langchain_mode.replace(' ', '_'), user_id))
-    return lock_file
+def update_and_get_source_files_given_langchain_mode_gr(db1s,
+                                                        selection_docs_state,
+                                                        requests_state,
+                                                        langchain_mode, chunk, chunk_size,
+
+                                                        image_loaders,
+                                                        pdf_loaders,
+                                                        url_loaders,
+                                                        jq_schema,
+
+                                                        captions_model=None,
+                                                        caption_loader=None,
+
+                                                        dbs=None, first_para=None,
+                                                        hf_embedding_model=None,
+                                                        use_openai_embedding=None,
+                                                        migrate_embedding_model=None,
+                                                        text_limit=None,
+                                                        db_type=None, load_db_if_exists=None,
+                                                        n_jobs=None, verbose=None, get_userid_auth=None,
+                                                        image_loaders_options0=None,
+                                                        pdf_loaders_options0=None,
+                                                        url_loaders_options0=None,
+                                                        jq_schema0=None):
+    from src.gpt_langchain import update_and_get_source_files_given_langchain_mode
+
+    loaders_dict, captions_model = gr_to_lg(image_loaders,
+                                            pdf_loaders,
+                                            url_loaders,
+                                            image_loaders_options0=image_loaders_options0,
+                                            pdf_loaders_options0=pdf_loaders_options0,
+                                            url_loaders_options0=url_loaders_options0,
+                                            captions_model=captions_model,
+                                            )
+    if jq_schema is None:
+        jq_schema = jq_schema0
+    loaders_dict.update(dict(captions_model=captions_model,
+                             caption_loader=caption_loader,
+                             jq_schema=jq_schema,
+                             ))
+
+    return update_and_get_source_files_given_langchain_mode(db1s,
+                                                            selection_docs_state,
+                                                            requests_state,
+                                                            langchain_mode, chunk, chunk_size,
+                                                            **loaders_dict,
+                                                            dbs=dbs, first_para=first_para,
+                                                            hf_embedding_model=hf_embedding_model,
+                                                            use_openai_embedding=use_openai_embedding,
+                                                            migrate_embedding_model=migrate_embedding_model,
+                                                            text_limit=text_limit,
+                                                            db_type=db_type, load_db_if_exists=load_db_if_exists,
+                                                            n_jobs=n_jobs, verbose=verbose,
+                                                            get_userid_auth=get_userid_auth)
 
 
-def _update_user_db(file,
-                    db1s=None,
-                    chunk=None, chunk_size=None,
-                    dbs=None, db_type=None,
-                    langchain_mode='UserData',
-                    langchain_modes=None,  # unused but required as part of selection_docs_state1
-                    langchain_mode_paths=None,
-                    visible_langchain_modes=None,
-                    use_openai_embedding=None,
-                    hf_embedding_model=None,
-                    migrate_embedding_model=None,
-                    caption_loader=None,
-                    enable_captions=None,
-                    captions_model=None,
-                    enable_ocr=None,
-                    enable_pdf_ocr=None,
-                    verbose=None,
-                    n_jobs=-1,
-                    is_url=None, is_txt=None,
-                    ):
-    assert db1s is not None
-    assert chunk is not None
-    assert chunk_size is not None
-    assert use_openai_embedding is not None
-    assert hf_embedding_model is not None
-    assert migrate_embedding_model is not None
-    assert caption_loader is not None
-    assert enable_captions is not None
-    assert captions_model is not None
-    assert enable_ocr is not None
-    assert enable_pdf_ocr is not None
-    assert verbose is not None
-
-    if dbs is None:
-        dbs = {}
-    assert isinstance(dbs, dict), "Wrong type for dbs: %s" % str(type(dbs))
-    # assert db_type in ['faiss', 'chroma'], "db_type %s not supported" % db_type
-    from gpt_langchain import add_to_db, get_db, path_to_docs
-    # handle case of list of temp buffer
-    if isinstance(file, list) and len(file) > 0 and hasattr(file[0], 'name'):
-        file = [x.name for x in file]
-    # handle single file of temp buffer
-    if hasattr(file, 'name'):
-        file = file.name
-    if not isinstance(file, (list, tuple, typing.Generator)) and isinstance(file, str):
-        file = [file]
-
-    if langchain_mode == LangChainMode.DISABLED.value:
-        return None, langchain_mode, get_source_files(), ""
-
-    if langchain_mode in [LangChainMode.LLM.value]:
-        # then switch to MyData, so langchain_mode also becomes way to select where upload goes
-        # but default to mydata if nothing chosen, since safest
-        if LangChainMode.MY_DATA.value in visible_langchain_modes:
-            langchain_mode = LangChainMode.MY_DATA.value
-
-    if langchain_mode_paths is None:
-        langchain_mode_paths = {}
-    user_path = langchain_mode_paths.get(langchain_mode)
-    # UserData or custom, which has to be from user's disk
-    if user_path is not None:
-        # move temp files from gradio upload to stable location
-        for fili, fil in enumerate(file):
-            if isinstance(fil, str) and os.path.isfile(fil):  # not url, text
-                new_fil = os.path.normpath(os.path.join(user_path, os.path.basename(fil)))
-                if os.path.normpath(os.path.abspath(fil)) != os.path.normpath(os.path.abspath(new_fil)):
-                    if os.path.isfile(new_fil):
-                        remove(new_fil)
-                    try:
-                        shutil.move(fil, new_fil)
-                    except FileExistsError:
-                        pass
-                    file[fili] = new_fil
-
-    if verbose:
-        print("Adding %s" % file, flush=True)
-
-    # FIXME: could avoid even parsing, let alone embedding, same old files if upload same file again
-    # FIXME: but assume nominally user isn't uploading all files over again from UI
-
-    sources = path_to_docs(file if not is_url and not is_txt else None,
-                           verbose=verbose,
-                           n_jobs=n_jobs,
-                           chunk=chunk, chunk_size=chunk_size,
-                           url=file if is_url else None,
-                           text=file if is_txt else None,
-                           enable_captions=enable_captions,
-                           captions_model=captions_model,
-                           enable_ocr=enable_ocr,
-                           enable_pdf_ocr=enable_pdf_ocr,
-                           caption_loader=caption_loader,
-                           db_type=db_type,
-                           )
-    exceptions = [x for x in sources if x.metadata.get('exception')]
-    exceptions_strs = [x.metadata['exception'] for x in exceptions]
-    sources = [x for x in sources if 'exception' not in x.metadata]
-
-    # below must at least come after langchain_mode is modified in case was LLM -> MyData,
-    # so original langchain mode changed
-    for k in db1s:
-        set_userid(db1s[k])
-    db1 = get_db1(db1s, langchain_mode)
-
-    lock_file = get_lock_file(db1s[LangChainMode.MY_DATA.value], langchain_mode)  # user-level lock, not db-level lock
-    with filelock.FileLock(lock_file):
-        if langchain_mode in db1s:
-            if db1[0] is not None:
-                # then add
-                db, num_new_sources, new_sources_metadata = add_to_db(db1[0], sources, db_type=db_type,
-                                                                      use_openai_embedding=use_openai_embedding,
-                                                                      hf_embedding_model=hf_embedding_model)
-            else:
-                # in testing expect:
-                # assert len(db1) == 2 and db1[1] is None, "Bad MyData db: %s" % db1
-                # for production hit, when user gets clicky:
-                assert len(db1) == 2, "Bad %s db: %s" % (langchain_mode, db1)
-                assert db1[1] is not None, "db hash was None, not allowed"
-                # then create
-                # if added has to original state and didn't change, then would be shared db for all users
-                from src.gpt_langchain import get_scratch_directory
-                persist_directory = get_scratch_directory(langchain_mode, db1)
-                db = get_db(sources, use_openai_embedding=use_openai_embedding,
-                            db_type=db_type,
-                            persist_directory=persist_directory,
-                            langchain_mode=langchain_mode,
-                            hf_embedding_model=hf_embedding_model,
-                            migrate_embedding_model=migrate_embedding_model)
-            if db is not None:
-                db1[0] = db
-            source_files_added = get_source_files(db=db1[0], exceptions=exceptions)
-            return None, langchain_mode, source_files_added, '\n'.join(exceptions_strs)
-        else:
-            from gpt_langchain import get_persist_directory
-            persist_directory = get_persist_directory(langchain_mode)
-            if langchain_mode in dbs and dbs[langchain_mode] is not None:
-                # then add
-                db, num_new_sources, new_sources_metadata = add_to_db(dbs[langchain_mode], sources, db_type=db_type,
-                                                                      use_openai_embedding=use_openai_embedding,
-                                                                      hf_embedding_model=hf_embedding_model)
-            else:
-                # then create.  Or might just be that dbs is unfilled, then it will fill, then add
-                db = get_db(sources, use_openai_embedding=use_openai_embedding,
-                            db_type=db_type,
-                            persist_directory=persist_directory,
-                            langchain_mode=langchain_mode,
-                            hf_embedding_model=hf_embedding_model,
-                            migrate_embedding_model=migrate_embedding_model)
-            dbs[langchain_mode] = db
-            # NOTE we do not return db, because function call always same code path
-            # return dbs[langchain_mode]
-            # db in this code path is updated in place
-            source_files_added = get_source_files(db=dbs[langchain_mode], exceptions=exceptions)
-            return None, langchain_mode, source_files_added, '\n'.join(exceptions_strs)
+def set_userid_gr(db1s, requests_state1, get_userid_auth):
+    from src.gpt_langchain import set_userid
+    return set_userid(db1s, requests_state1, get_userid_auth)
 
 
-def get_db(db1s, langchain_mode, dbs=None):
-    db1 = get_db1(db1s, langchain_mode)
-    lock_file = get_lock_file(db1s[LangChainMode.MY_DATA.value], langchain_mode)
-
-    with filelock.FileLock(lock_file):
-        if langchain_mode in ['wiki_full']:
-            # NOTE: avoid showing full wiki.  Takes about 30 seconds over about 90k entries, but not useful for now
-            db = None
-        elif langchain_mode in db1s and len(db1) == 2 and db1[0] is not None:
-            db = db1[0]
-        elif dbs is not None and langchain_mode in dbs and dbs[langchain_mode] is not None:
-            db = dbs[langchain_mode]
-        else:
-            db = None
-    return db
+def set_dbid_gr(db1):
+    from src.gpt_langchain import set_dbid
+    return set_dbid(db1)
 
 
-def get_source_files_given_langchain_mode(db1s, langchain_mode='UserData', dbs=None):
-    db = get_db(db1s, langchain_mode, dbs=dbs)
-    if langchain_mode in ['LLM'] or db is None:
-        return "Sources: N/A"
-    return get_source_files(db=db, exceptions=None)
-
-
-def get_source_files(db=None, exceptions=None, metadatas=None):
-    if exceptions is None:
-        exceptions = []
-
-    # only should be one source, not confused
-    # assert db is not None or metadatas is not None
-    # clicky user
-    if db is None and metadatas is None:
-        return "No Sources at all"
-
-    if metadatas is None:
-        source_label = "Sources:"
-        if db is not None:
-            from gpt_langchain import get_metadatas
-            metadatas = get_metadatas(db)
-        else:
-            metadatas = []
-        adding_new = False
-    else:
-        source_label = "New Sources:"
-        adding_new = True
-
-    # below automatically de-dups
-    from gpt_langchain import get_url
-    small_dict = {get_url(x['source'], from_str=True, short_name=True): get_short_name(x.get('head')) for x in
-                  metadatas}
-    # if small_dict is empty dict, that's ok
-    df = pd.DataFrame(small_dict.items(), columns=['source', 'head'])
-    df.index = df.index + 1
-    df.index.name = 'index'
-    source_files_added = tabulate.tabulate(df, headers='keys', tablefmt='unsafehtml')
-
-    if exceptions:
-        exception_metadatas = [x.metadata for x in exceptions]
-        small_dict = {get_url(x['source'], from_str=True, short_name=True): get_short_name(x.get('exception')) for x in
-                      exception_metadatas}
-        # if small_dict is empty dict, that's ok
-        df = pd.DataFrame(small_dict.items(), columns=['source', 'exception'])
-        df.index = df.index + 1
-        df.index.name = 'index'
-        exceptions_html = tabulate.tabulate(df, headers='keys', tablefmt='unsafehtml')
-    else:
-        exceptions_html = ''
-
-    if metadatas and exceptions:
-        source_files_added = """\
-        <html>
-          <body>
-            <p>
-               {0} <br>
-            </p>
-               <div style="overflow-y: auto;height:400px">
-               {1}
-               {2}
-               </div>
-          </body>
-        </html>
-        """.format(source_label, source_files_added, exceptions_html)
-    elif metadatas:
-        source_files_added = """\
-        <html>
-          <body>
-            <p>
-               {0} <br>
-            </p>
-               <div style="overflow-y: auto;height:400px">
-               {1}
-               </div>
-          </body>
-        </html>
-        """.format(source_label, source_files_added)
-    elif exceptions_html:
-        source_files_added = """\
-        <html>
-          <body>
-            <p>
-               Exceptions: <br>
-            </p>
-               <div style="overflow-y: auto;height:400px">
-               {0}
-               </div>
-          </body>
-        </html>
-        """.format(exceptions_html)
-    else:
-        if adding_new:
-            source_files_added = "No New Sources"
-        else:
-            source_files_added = "No Sources"
-
-    return source_files_added
-
-
-def update_and_get_source_files_given_langchain_mode(db1s, langchain_mode, chunk, chunk_size,
-                                                     dbs=None, first_para=None,
-                                                     hf_embedding_model=None,
-                                                     migrate_embedding_model=None,
-                                                     text_limit=None,
-                                                     langchain_mode_paths=None, db_type=None, load_db_if_exists=None,
-                                                     n_jobs=None, verbose=None):
-    assert hf_embedding_model is not None
-    assert migrate_embedding_model is not None
-    has_path = {k: v for k, v in langchain_mode_paths.items() if v}
-    if langchain_mode in [LangChainMode.LLM.value, LangChainMode.MY_DATA.value]:
-        # then assume user really meant UserData, to avoid extra clicks in UI,
-        # since others can't be on disk, except custom user modes, which they should then select to query it
-        if LangChainMode.USER_DATA.value in has_path:
-            langchain_mode = LangChainMode.USER_DATA.value
-
-    db = get_db(db1s, langchain_mode, dbs=dbs)
-
-    from gpt_langchain import make_db
-    # not designed for older way of using openai embeddings, why use_openai_embedding=False
-    # use_openai_embedding, hf_embedding_model passed in and possible different values used,
-    # but no longer used here or in calling functions so ok
-    db, num_new_sources, new_sources_metadata = make_db(use_openai_embedding=False,
-                                                        hf_embedding_model=hf_embedding_model,
-                                                        migrate_embedding_model=migrate_embedding_model,
-                                                        first_para=first_para, text_limit=text_limit,
-                                                        chunk=chunk,
-                                                        chunk_size=chunk_size,
-                                                        langchain_mode=langchain_mode,
-                                                        langchain_mode_paths=langchain_mode_paths,
-                                                        db_type=db_type,
-                                                        load_db_if_exists=load_db_if_exists,
-                                                        db=db,
-                                                        n_jobs=n_jobs,
-                                                        verbose=verbose)
-    # during refreshing, might have "created" new db since not in dbs[] yet, so insert back just in case
-    # so even if persisted, not kept up-to-date with dbs memory
-    if langchain_mode in db1s:
-        db1s[langchain_mode][0] = db
-    else:
-        dbs[langchain_mode] = db
-
-    # return only new sources with text saying such
-    return get_source_files(db=None, exceptions=None, metadatas=new_sources_metadata)
-
-
-def get_db1(db1s, langchain_mode1):
-    if langchain_mode1 in db1s:
-        db1 = db1s[langchain_mode1]
-    else:
-        # indicates to code that not scratch database
-        db1 = [None, None]
-    return db1
+def set_userid_direct_gr(db1s, userid, username):
+    from src.gpt_langchain import set_userid_direct
+    return set_userid_direct(db1s, userid, username)

@@ -72,6 +72,8 @@ These instructions are for Ubuntu x86_64 (other linux would be similar with diff
     ```
 * Install document question-answer dependencies:
     ```bash
+    # May be required for jq package:
+    sudo apt-get install autoconf libtool
     # Required for Doc Q/A: LangChain:
     pip install -r reqs_optional/requirements_optional_langchain.txt
     # Required for CPU: LLaMa/GPT4All:
@@ -82,26 +84,31 @@ These instructions are for Ubuntu x86_64 (other linux would be similar with diff
     pip install -r reqs_optional/requirements_optional_langchain.urls.txt
     # Optional: support docx, pptx, ArXiv, etc. required by some python packages
     sudo apt-get install -y libmagic-dev poppler-utils tesseract-ocr libtesseract-dev libreoffice
+    # Improved OCR with DocTR:
+    conda install -c conda-forge pygobject
+    pip install -r reqs_optional/requirements_optional_doctr.txt
+    # go back to older onnx so Tesseract OCR still works
+    pip install onnxruntime==1.15.0 onnxruntime-gpu==1.15.0
     # Optional: for supporting unstructured package
     python -m nltk.downloader all
+    # Optional but required for PlayWright
+    playwright install --with-deps
 * GPU Optional: For AutoGPTQ support on x86_64 linux
     Try H2O.ai's pre-built wheel:
     ```bash
-    pip uninstall -y auto-gptq ; pip install https://s3.amazonaws.com/artifacts.h2o.ai/deps/h2ogpt/auto_gptq-0.3.0-cp310-cp310-linux_x86_64.whl --use-deprecated=legacy-resolver
+    pip uninstall -y auto-gptq ; pip install https://github.com/PanQiWei/AutoGPTQ/releases/download/v0.4.2/auto_gptq-0.4.2+cu118-cp310-cp310-linux_x86_64.whl
+    # in-transformers support of AutoGPTQ
+    pip install git+https://github.com/huggingface/optimum.git
     ```
     This avoids issues with missing cuda extensions etc.  if this does not apply to your system, run:
     ```bash
-    pip uninstall -y auto-gptq ; GITHUB_ACTIONS=true pip install auto-gptq==0.3.0 --no-cache-dir
+    pip uninstall -y auto-gptq ; GITHUB_ACTIONS=true pip install auto-gptq --extra-index-url https://huggingface.github.io/autogptq-index/whl/cu118/ --no-cache-dir
     ```
-   We recommend to install like the above in order to avoid warnings and inefficient memory usage. If one has trouble installing AutoGPTQ, can try:
-   ```bash
-   pip install https://github.com/PanQiWei/AutoGPTQ/releases/download/v0.3.0/auto_gptq-0.3.0+cu117-cp310-cp310-linux_x86_64.whl
-   ```
-    However, if one sees `CUDA extension not installed` in output after loading model, one needs to compile it, else will use double memory and be slower on GPU.
+    If one sees `CUDA extension not installed` in output after loading model, one needs to compile AutoGPTQ, else will use double memory and be slower on GPU.
     See [AutoGPTQ](README_GPU.md#autogptq) about running AutoGPT models.
 * GPU Optional: For exllama support on x86_64 linux
     ```bash
-    pip uninstall -y exllama ; pip install https://github.com/jllllll/exllama/releases/download/0.0.8/exllama-0.0.8+cu118-cp310-cp310-linux_x86_64.whl --no-cache-dir
+    pip uninstall -y exllama ; pip install https://github.com/jllllll/exllama/releases/download/0.0.13/exllama-0.0.13+cu118-cp310-cp310-linux_x86_64.whl --no-cache-dir
     ```
     See [exllama](README_GPU.md#exllama) about running exllama models.
 
@@ -109,7 +116,10 @@ These instructions are for Ubuntu x86_64 (other linux would be similar with diff
   * Download/Install [CUDA llama-cpp-python wheel](https://github.com/jllllll/llama-cpp-python-cuBLAS-wheels), E.g.:
     ```bash
     pip uninstall -y llama-cpp-python llama-cpp-python-cuda
+    # GGMLv3 ONLY:
     pip install https://github.com/jllllll/llama-cpp-python-cuBLAS-wheels/releases/download/textgen-webui/llama_cpp_python_cuda-0.1.73+cu117-cp310-cp310-linux_x86_64.whl
+    # GGUF ONLY:
+    pip install https://github.com/jllllll/llama-cpp-python-cuBLAS-wheels/releases/download/textgen-webui/llama_cpp_python_cuda-0.1.83+cu117-cp310-cp310-linux_x86_64.whl
     ```
   * If any issues, then must compile llama-cpp-python with CUDA support:
    ```bash
@@ -119,7 +129,7 @@ These instructions are for Ubuntu x86_64 (other linux would be similar with diff
     export FORCE_CMAKE=1
     CMAKE_ARGS="-DLLAMA_CUBLAS=on" FORCE_CMAKE=1 pip install llama-cpp-python==0.1.73 --no-cache-dir --verbose
    ```
-  * By default, we set `n_gpu_layers` to large value, so llama.cpp offloads all layers for maximum GPU performance.  You can control this by uncommenting `# n_gpu_layers` and set to some value in `.env_gpt4all`.  For highest performance, offload *all* layers.
+  * By default, we set `n_gpu_layers` to large value, so llama.cpp offloads all layers for maximum GPU performance.  You can control this by passing `--llamacpp_dict="{n_gpu_layers=20}"` for value 20, or setting in UI.  For highest performance, offload *all* layers.
     That is, one gets maximum performance if one sees in startup of h2oGPT all layers offloaded:
       ```text
     llama_model_load_internal: offloaded 35/35 layers to GPU
@@ -157,7 +167,11 @@ These instructions are for Ubuntu x86_64 (other linux would be similar with diff
 
   UI using GPU with at least 24GB with streaming:
   ```bash
-  python generate.py --base_model=h2oai/h2ogpt-oasst1-512-12b --load_8bit=True  --score_model=None --langchain_mode='UserData' --user_path=user_path
+  python generate.py --base_model=h2oai/h2ogpt-4096-llama2-13b-chat --load_8bit=True  --score_model=None --langchain_mode='UserData' --user_path=user_path
+  ```
+  Same with a smaller model without quantization:
+  ```bash
+  python generate.py --base_model=h2oai/h2ogpt-4096-llama2-7b-chat --score_model=None --langchain_mode='UserData' --user_path=user_path
   ```
   UI using LLaMa.cpp LLaMa2 model:
   ```bash
@@ -168,12 +182,18 @@ These instructions are for Ubuntu x86_64 (other linux would be similar with diff
 
   If using OpenAI for the LLM is ok, but you want documents to be parsed and embedded locally, then do:
   ```bash
-  python generate.py  --inference_server=openai_chat --base_model=gpt-3.5-turbo --score_model=None
+  OPENAI_API_KEY=<key> python generate.py  --inference_server=openai_chat --base_model=gpt-3.5-turbo --score_model=None
   ```
-  and perhaps you want better image caption performance and focus local GPU on that, then do:
+  where `<key>` should be replaced by your OpenAI key that probably starts with `sk-`.  OpenAI is **not** recommended for private document question-answer, but it can be a good reference for testing purposes or when privacy is not required.  
+  Perhaps you want better image caption performance and focus local GPU on that, then do:
   ```bash
-  python generate.py  --inference_server=openai_chat --base_model=gpt-3.5-turbo --score_model=None --captions_model=Salesforce/blip2-flan-t5-xl
+  OPENAI_API_KEY=<key> python generate.py  --inference_server=openai_chat --base_model=gpt-3.5-turbo --score_model=None --captions_model=Salesforce/blip2-flan-t5-xl
   ```
+  For Azure OpenAI:
+  ```bash
+   OPENAI_API_KEY=<key> python generate.py --inference_server="openai_azure_chat:<deployment_name>:<base_url>:<api_version>" --base_model=gpt-3.5-turbo --h2ocolors=False --langchain_mode=UserData
+   ```
+  where the entry `<deployment_name>` is required for Azure, others are optional and can be filled with string `None` or have empty input between `:`.  Azure OpenAI is a bit safer for private access to Azure-based docs.
   
   Add `--share=True` to make gradio server visible via sharable URL.
  

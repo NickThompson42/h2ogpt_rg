@@ -36,9 +36,9 @@ def test_export_copy():
     subset_types = [x.name for x in list(DocumentSubset)]
     assert 'Relevant' in subset_types and len(prompt_types) >= 4
 
-    langchain_types = [x.name for x in list(LangChainMode)]
-    langchain_types_v = [x.value for x in list(LangChainMode)]
-    assert 'UserData' in langchain_types_v and "USER_DATA" in langchain_types and len(langchain_types) >= 9
+    langchain_mode_types = [x.name for x in list(LangChainMode)]
+    langchain_mode_types_v = [x.value for x in list(LangChainMode)]
+    assert 'UserData' in langchain_mode_types_v and "USER_DATA" in langchain_mode_types and len(langchain_mode_types) >= 8
 
     prompter = Prompter(prompt_type, prompt_dict)
     assert prompter is not None
@@ -67,7 +67,8 @@ def test_pipeline1():
     model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.float16,
                                                  device_map=device_map, load_in_8bit=load_in_8bit)
 
-    generate_text = H2OTextGenerationPipeline(model=model, tokenizer=tokenizer, prompt_type='human_bot')
+    generate_text = H2OTextGenerationPipeline(model=model, tokenizer=tokenizer, prompt_type='human_bot',
+                                              base_model=model_name)
 
     # generate
     outputs = generate_text("Why is drinking water so healthy?", return_full_text=True, max_new_tokens=400)
@@ -95,7 +96,8 @@ def test_pipeline2():
     tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left")
     model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16, device_map=device_map,
                                                  load_in_8bit=load_in_8bit)
-    generate_text = H2OTextGenerationPipeline(model=model, tokenizer=tokenizer, prompt_type='human_bot')
+    generate_text = H2OTextGenerationPipeline(model=model, tokenizer=tokenizer, prompt_type='human_bot',
+                                              base_model=model_name)
 
     res = generate_text("Why is drinking water so healthy?", max_new_tokens=100)
     print(res[0]["generated_text"])

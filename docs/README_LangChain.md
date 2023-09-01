@@ -46,6 +46,7 @@ Open-source data types are supported, .msg is not supported due to GPL-3 require
    - `.odt`: Open Document Text,
    - `.pptx` : PowerPoint Document,
    - `.ppt` : PowerPoint Document,
+   - `.xml`: XML,
    - `.apng` : APNG Image (optional),
    - `.blp` : BLP Image (optional),
    - `.bmp` : BMP Image (optional),
@@ -174,7 +175,7 @@ pip install -r reqs_optional/requirements_optional_langchain.gpllike.txt
 ```
 but pymupdf is AGPL, requiring any source code be made available, which is not an issue directly for h2oGPT, but it's like GPL and too strong a constraint for general commercial use.
 
-When pymupdf is installed, we will use `PyMuPDFLoader` by default to parse PDFs since better than `PyPDFLoader` and much better than `PDFMinerLoader`.  This can be overridden by setting `PDF_CLASS_NAME=PyPDFLoader` in `.env_gpt4all`.
+When pymupdf is installed, we will use `PyMuPDFLoader` by default to parse PDFs since it's better than `PyPDFLoader` and much better than `PDFMinerLoader`.
 
 ### Adding new file types
 
@@ -187,7 +188,7 @@ Metadata is added using `add_meta` function, and other metadata, like chunk_id, 
 To use some example databases (will overwrite UserData make above unless change options) and run generate after, do:
 ```bash
 python src/make_db.py --download_some=True
-python generate.py --base_model=h2oai/h2ogpt-oasst1-512-12b --load_8bit=True --langchain_mode=UserData --visible_langchain_modes="['UserData', 'wiki', 'MyData', 'github h2oGPT', 'DriverlessAI docs']"
+python generate.py --base_model=h2oai/h2ogpt-oasst1-512-12b --load_8bit=True --langchain_mode=UserData --langchain_modes="['UserData', 'wiki', 'MyData', 'github h2oGPT', 'DriverlessAI docs']"
 ```
 which downloads example databases.  This obtains files from some [pre-generated databases](https://huggingface.co/datasets/h2oai/db_dirs).  A large Wikipedia database is also available.
 
@@ -211,25 +212,30 @@ which will avoid using `user_path` since it is no longer passed.  Otherwise when
 
 If you have enough GPU memory for embedding, but not the LLM as well, then a less private mode is to use OpenAI model.
 ```bash
-python generate.py  --inference_server=openai_chat --base_model=gpt-3.5-turbo --score_model=None --langchain_mode=LLM --visible_langchain_modes="['LLM', 'UserData', 'MyData']"
+python generate.py  --inference_server=openai_chat --base_model=gpt-3.5-turbo --score_model=None --langchain_mode=LLM --langchain_modes="['LLM', 'UserData', 'MyData']"
 ```
 and if you want to push image caption model to get better captions, this can be done if have enough GPU memory or if use OpenAI:
 ```bash
-python generate.py  --inference_server=openai_chat --base_model=gpt-3.5-turbo --score_model=None --langchain_mode=LLM --visible_langchain_modes="['LLM', 'UserData', 'MyData']" --captions_model=Salesforce/blip2-flan-t5-xl
+python generate.py  --inference_server=openai_chat --base_model=gpt-3.5-turbo --score_model=None --langchain_mode=LLM --langchain_modes="['LLM', 'UserData', 'MyData']" --captions_model=Salesforce/blip2-flan-t5-xl
 ```
+Similar commands can be used for Azure OpenAI, e.g.
+```bash
+OPENAI_API_KEY=<key> python generate.py --inference_server="openai_azure_chat:<deployment_name>:<base_url>:<api_version>" --base_model=gpt-3.5-turbo --h2ocolors=False --langchain_mode=UserData
+```
+
 
 ### Multiple embeddings and sources
 
 We only support one embedding at a time for each database.
 
-So you could use src/make_db.py to make the db for different embeddings (`--hf_embedding_model` like gen.py, any HF model) for each collection (e.g. UserData, UserData2) for each source folders (e.g. user_path, user_path2), and then at generate.py time you can specify those different collection names in `--langchain_modes` and `--visible_langchain_modes` and `--langchain_mode_paths`.  For example:
+So you could use src/make_db.py to make the db for different embeddings (`--hf_embedding_model` like gen.py, any HF model) for each collection (e.g. UserData, UserData2) for each source folders (e.g. user_path, user_path2), and then at generate.py time you can specify those different collection names in `--langchain_modes` and `--langchain_modes` and `--langchain_mode_paths`.  For example:
 ```bash
 python src/make_db.py --user_path=user_path --collection_name=UserData --hf_embedding_model=hkunlp/instructor-large
 python src/make_db.py --user_path=user_path2 --collection_name=UserData2 --hf_embedding_model=sentence-transformers/all-MiniLM-L6-v2
 ```
 then
 ```bash
-python generate.py --base_model='llama' --prompt_type=llama2 --score_model=None --langchain_mode='UserData' --langchain_modes=['UserData','UserData2'] --visible_langchain_modes=['UserData','UserData2'] --langchain_mode_paths={'UserData':'user_path','UserData2':'user_path2'}
+python generate.py --base_model='llama' --prompt_type=llama2 --score_model=None --langchain_mode='UserData' --langchain_modes=['UserData','UserData2'] --langchain_modes=['UserData','UserData2'] --langchain_mode_paths={'UserData':'user_path','UserData2':'user_path2'}
 ```
 and watch-out for use of whitespace.  For `langchain_mode_paths` you can pass surrounded by "'s and have spaces.
 
@@ -246,7 +252,16 @@ print(image_types)
 Select types, and pass to `make_db` like:
 ```bash
 python src/make_db.py --user_path="/home/jon/Downloads/demo_data" --collection_name=VAData --enable_pdf_ocr='off' --selected_file_types="['pdf', 'html', 'htm']"
-python generate.py --langchain_mode=VAData --langchain_modes=['VAData']
+python generate.py  --base_model='llama' --prompt_type=llama2 --score_model=None --langchain_mode=VAData --langchain_modes=['VAData']
+```
+
+To ensure a collection is persisted even when not using any athentication, be sure it is shared type, e.g.:
+```bash
+python generate.py --base_model='llama' --prompt_type=llama2 --score_model=None --max_max_new_tokens=2048 --max_new_tokens=1024 \
+       --visible_tos_tab=False --visible_hosts_tab=False --visible_models_tab=False \
+       --langchain_modes="['LLM','PersistData']" --langchain_mode=PersistData \
+       --langchain_mode_types="{'PersistData':'shared'}" \
+       --top_k_docs=-1 --max_time=360 --save_dir=save
 ```
 
 ### Note about Embeddings
@@ -362,7 +377,7 @@ Notes:
 
 UserData: Shared with anyone who is on your server.  Persisted across sessions in single location for entire server.  Control upload via allow_upload_to_user_data option.  Useful for collaboration.
 
-MyData: Scratch space that is inaccessible if one goes into a new browser session.  Useful for public demonstrations so that every instance is independent.  Or useful  if user is not allowed to upload to shared UserData and wants to do Q/A.
+MyData: Personal space that is inaccessible if one goes into a new browser session.  Useful for public demonstrations so that every instance is independent.  Or useful  if user is not allowed to upload to shared UserData and wants to do Q/A.
 
 It's work in progress to add other persistent databases and to have MyData persisted across browser sessions via cookie or other authentication.
 
@@ -391,6 +406,8 @@ For links to direct to the document and download to your local machine, the orig
 
 * [Quiver](https://github.com/StanGirard/quivr). By comparison, Quiver requires docker but also supports audio and video and currently only supports OpenAI models and embeddings.
 
+* [LM Studio](https://github.com/lmstudio-ai). Nice control over models and llama settings, good windows installer.
+
 * [DocsGPT](https://github.com/arc53/DocsGPT).  More limited document support.
 
 * [GPT4-PDF-Chatbot-LangChain](https://github.com/mayooear/gpt4-pdf-chatbot-langchain).  Uses OpenAI, pinecone, etc. No longer maintained.
@@ -401,7 +418,7 @@ For links to direct to the document and download to your local machine, the orig
 
 * [ChatBox](https://github.com/Bin-Huang/chatbox) has ability to collaborate.
 
-* [Chat2GB](https://github.com/alibaba/Chat2DB) like DB-GPT by Alibaba.
+* [Chat2DB](https://github.com/alibaba/Chat2DB) like DB-GPT by Alibaba.
 
 * [pdfGPT](https://github.com/bhaskatripathi/pdfGPT) like PrivateGPT but no longer maintained.
 
@@ -410,6 +427,12 @@ For links to direct to the document and download to your local machine, the orig
 * [KhoJ](https://github.com/khoj-ai/khoj) but also access from emacs or Obsidian.
 
 * [ChatPDF](https://www.chatpdf.com/) but h2oGPT is open-source and private and many more data types.
+
+* [TryGloo](https://www.trygloo.com/) Semantic Search and Classification.
+
+* [Cube](https://cube.dev/blog/introducing-the-langchain-integration).
+
+* [RFPBot](https://www.datarobot.com/platform/generative-ai/).  Confidence score, slack integration.
 
 * [Sharly](https://www.sharly.ai/) but h2oGPT is open-source and private and many more data types.  Sharly and h2oGPT both allow sharing work through UserData shared collection.
 

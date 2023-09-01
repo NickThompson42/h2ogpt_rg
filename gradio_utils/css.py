@@ -57,4 +57,18 @@ def make_css_base() -> str:
     .gradio-container {
         max-width: none !important;
     }
+    
+    div.message {
+        padding: var(--text-lg) !important;
+    }
+    
+    div.message.user > div.icon-button {
+        top: unset;
+        bottom: 0;
+    }
+    
+    div.message.bot > div.icon-button {
+        top: unset;
+        bottom: 0;
+    }
     """

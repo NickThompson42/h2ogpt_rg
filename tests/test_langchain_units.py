@@ -1,10 +1,13 @@
+import gzip
+import io
+import json
 import os
 import shutil
 import tempfile
 import pytest
 
 from tests.utils import wrap_test_forked, kill_weaviate
-from src.enums import DocumentSubset, LangChainAction, LangChainMode
+from src.enums import DocumentSubset, LangChainAction, LangChainMode, LangChainTypes
 from src.gpt_langchain import get_persist_directory
 from src.utils import zip_data, download_simple, get_ngpus_vis, get_mem_gpus, have_faiss, remove, get_kwargs
 
@@ -56,8 +59,8 @@ def run_qa_wiki(use_openai_model=False, first_para=True, text_limit=None, chain_
     from langchain.chains.qa_with_sources import load_qa_with_sources_chain
 
     sources = get_wiki_sources(first_para=first_para, text_limit=text_limit)
-    llm, model_name, streamer, prompt_type_out, async_output = \
-        get_llm(use_openai_model=use_openai_model, prompt_type=prompt_type)
+    llm, model_name, streamer, prompt_type_out, async_output, only_new_text = \
+        get_llm(use_openai_model=use_openai_model, prompt_type=prompt_type, llamacpp_dict={})
     chain = load_qa_with_sources_chain(llm, chain_type=chain_type)
 
     question = "What are the main differences between Linux and Windows?"
@@ -84,11 +87,13 @@ def check_ret(ret):
 def test_qa_wiki_db_openai():
     from src.gpt_langchain import _run_qa_db
     query = "What are the main differences between Linux and Windows?"
+    langchain_mode = 'wiki'
     ret = _run_qa_db(query=query, use_openai_model=True, use_openai_embedding=True, text_limit=None,
                      hf_embedding_model="sentence-transformers/all-MiniLM-L6-v2",
                      db_type='faiss',
-                     langchain_mode='wiki',
-                     langchain_action=LangChainAction.QUERY.value, langchain_agents=[])
+                     langchain_mode_types=dict(langchain_mode=LangChainTypes.SHARED.value),
+                     langchain_mode=langchain_mode,
+                     langchain_action=LangChainAction.QUERY.value, langchain_agents=[], llamacpp_dict={})
     check_ret(ret)
 
 
@@ -100,12 +105,14 @@ def test_qa_wiki_db_hf():
     # but this case can handle at least more documents, by picking top k
     # FIXME: but spitting out garbage answer right now, all fragmented, or just 1-word answer
     query = "What are the main differences between Linux and Windows?"
+    langchain_mode = 'wiki'
     ret = _run_qa_db(query=query, use_openai_model=False, use_openai_embedding=False, text_limit=256,
                      hf_embedding_model="sentence-transformers/all-MiniLM-L6-v2",
                      db_type='faiss',
-                     langchain_mode='wiki',
+                     langchain_mode_types=dict(langchain_mode=LangChainTypes.SHARED.value),
+                     langchain_mode=langchain_mode,
                      langchain_action=LangChainAction.QUERY.value,
-                     langchain_agents=[])
+                     langchain_agents=[], llamacpp_dict={})
     check_ret(ret)
 
 
@@ -114,13 +121,15 @@ def test_qa_wiki_db_hf():
 def test_qa_wiki_db_chunk_hf():
     from src.gpt_langchain import _run_qa_db
     query = "What are the main differences between Linux and Windows?"
+    langchain_mode = 'wiki'
     ret = _run_qa_db(query=query, use_openai_model=False, use_openai_embedding=False, text_limit=256, chunk=True,
                      chunk_size=256,
                      hf_embedding_model="sentence-transformers/all-MiniLM-L6-v2",
                      db_type='faiss',
-                     langchain_mode='wiki',
+                     langchain_mode_types=dict(langchain_mode=LangChainTypes.SHARED.value),
+                     langchain_mode=langchain_mode,
                      langchain_action=LangChainAction.QUERY.value,
-                     langchain_agents=[])
+                     langchain_agents=[], llamacpp_dict={})
     check_ret(ret)
 
 
@@ -130,13 +139,15 @@ def test_qa_wiki_db_chunk_openai():
     from src.gpt_langchain import _run_qa_db
     # don't need 256, just seeing how compares to hf
     query = "What are the main differences between Linux and Windows?"
+    langchain_mode = 'wiki'
     ret = _run_qa_db(query=query, use_openai_model=True, use_openai_embedding=True, text_limit=256, chunk=True,
                      chunk_size=256,
                      hf_embedding_model="sentence-transformers/all-MiniLM-L6-v2",
                      db_type='faiss',
-                     langchain_mode='wiki',
+                     langchain_mode_types=dict(langchain_mode=LangChainTypes.SHARED.value),
+                     langchain_mode=langchain_mode,
                      langchain_action=LangChainAction.QUERY.value,
-                     langchain_agents=[])
+                     langchain_agents=[], llamacpp_dict={})
     check_ret(ret)
 
 
@@ -146,13 +157,15 @@ def test_qa_github_db_chunk_openai():
     from src.gpt_langchain import _run_qa_db
     # don't need 256, just seeing how compares to hf
     query = "what is a software defined asset"
+    langchain_mode = 'github h2oGPT'
     ret = _run_qa_db(query=query, use_openai_model=True, use_openai_embedding=True, text_limit=256, chunk=True,
                      chunk_size=256,
                      hf_embedding_model="sentence-transformers/all-MiniLM-L6-v2",
                      db_type='faiss',
-                     langchain_mode='github h2oGPT',
+                     langchain_mode_types=dict(langchain_mode=LangChainTypes.SHARED.value),
+                     langchain_mode=langchain_mode,
                      langchain_action=LangChainAction.QUERY.value,
-                     langchain_agents=[])
+                     langchain_agents=[], llamacpp_dict={})
     check_ret(ret)
 
 
@@ -162,13 +175,15 @@ def test_qa_daidocs_db_chunk_hf():
     from src.gpt_langchain import _run_qa_db
     # FIXME: doesn't work well with non-instruct-tuned Cerebras
     query = "Which config.toml enables pytorch for NLP?"
+    langchain_mode = 'DriverlessAI docs'
     ret = _run_qa_db(query=query, use_openai_model=False, use_openai_embedding=False, text_limit=None, chunk=True,
                      chunk_size=128,
                      hf_embedding_model="sentence-transformers/all-MiniLM-L6-v2",
                      db_type='faiss',
-                     langchain_mode='DriverlessAI docs',
+                     langchain_mode_types=dict(langchain_mode=LangChainTypes.SHARED.value),
+                     langchain_mode=langchain_mode,
                      langchain_action=LangChainAction.QUERY.value,
-                     langchain_agents=[])
+                     langchain_agents=[], llamacpp_dict={})
     check_ret(ret)
 
 
@@ -178,11 +193,14 @@ def test_qa_daidocs_db_chunk_hf_faiss():
     from src.gpt_langchain import _run_qa_db
     query = "Which config.toml enables pytorch for NLP?"
     # chunk_size is chars for each of k=4 chunks
+    langchain_mode = 'DriverlessAI docs'
     ret = _run_qa_db(query=query, use_openai_model=False, use_openai_embedding=False, text_limit=None, chunk=True,
                      chunk_size=128 * 1,  # characters, and if k=4, then 4*4*128 = 2048 chars ~ 512 tokens
-                     langchain_mode='DriverlessAI docs',
+                     langchain_mode_types=dict(langchain_mode=LangChainTypes.SHARED.value),
+                     langchain_mode=langchain_mode,
                      langchain_action=LangChainAction.QUERY.value,
                      langchain_agents=[],
+                     llamacpp_dict={},
                      db_type='faiss',
                      hf_embedding_model="sentence-transformers/all-MiniLM-L6-v2",
                      )
@@ -198,7 +216,9 @@ def test_qa_daidocs_db_chunk_hf_dbs(db_type, top_k_docs):
     langchain_mode = 'DriverlessAI docs'
     langchain_action = LangChainAction.QUERY.value
     langchain_agents = []
-    persist_directory = get_persist_directory(langchain_mode)
+    persist_directory, langchain_type = get_persist_directory(langchain_mode,
+                                                              langchain_type=LangChainTypes.SHARED.value)
+    assert langchain_type == LangChainTypes.SHARED.value
     remove(persist_directory)
     from src.gpt_langchain import _run_qa_db
     query = "Which config.toml enables pytorch for NLP?"
@@ -217,6 +237,7 @@ def test_qa_daidocs_db_chunk_hf_dbs(db_type, top_k_docs):
                      db_type=db_type,
                      top_k_docs=top_k_docs,
                      model_name=model_name,
+                     llamacpp_dict={},
                      )
     check_ret(ret)
 
@@ -231,6 +252,7 @@ def test_qa_daidocs_db_chunk_hf_dbs_switch_embedding(db_type):
     prompt_type = 'human_bot'
     all_kwargs = dict(load_8bit=False,
                       load_4bit=False,
+                      low_bit_mode=1,
                       load_half=True,
                       load_gptq=False,
                       load_exllama=False,
@@ -253,6 +275,7 @@ def test_qa_daidocs_db_chunk_hf_dbs_switch_embedding(db_type):
                       rope_scaling=None,
                       max_seq_len=None,
                       compile_model=True,
+                      llamacpp_dict={},
 
                       verbose=False)
     model, tokenizer, device = get_model(reward_type=False,
@@ -261,7 +284,9 @@ def test_qa_daidocs_db_chunk_hf_dbs_switch_embedding(db_type):
     langchain_mode = 'DriverlessAI docs'
     langchain_action = LangChainAction.QUERY.value
     langchain_agents = []
-    persist_directory = get_persist_directory(langchain_mode)
+    persist_directory, langchain_type = get_persist_directory(langchain_mode,
+                                                              langchain_type=LangChainTypes.SHARED.value)
+    assert langchain_type == LangChainTypes.SHARED.value
     remove(persist_directory)
     from src.gpt_langchain import _run_qa_db
     query = "Which config.toml enables pytorch for NLP?"
@@ -279,6 +304,7 @@ def test_qa_daidocs_db_chunk_hf_dbs_switch_embedding(db_type):
                      langchain_action=langchain_action,
                      langchain_agents=langchain_agents,
                      db_type=db_type,
+                     llamacpp_dict={},
                      )
     check_ret(ret)
 
@@ -297,6 +323,7 @@ def test_qa_daidocs_db_chunk_hf_dbs_switch_embedding(db_type):
                      langchain_action=langchain_action,
                      langchain_agents=langchain_agents,
                      db_type=db_type,
+                     llamacpp_dict={},
                      )
     check_ret(ret)
 
@@ -307,21 +334,31 @@ def test_qa_wiki_db_chunk_hf_dbs_llama(db_type):
     kill_weaviate(db_type)
     from src.gpt4all_llm import get_model_tokenizer_gpt4all
     model_name = 'llama'
-    model, tokenizer, device = get_model_tokenizer_gpt4all(model_name)
+    model, tokenizer, device = get_model_tokenizer_gpt4all(model_name,
+                                                           n_jobs=8,
+                                                           max_seq_len=512,
+                                                           llamacpp_dict=dict(
+                                                               model_path_llama='llama-2-7b-chat.ggmlv3.q8_0.bin',
+                                                               n_gpu_layers=100,
+                                                               use_mlock=True,
+                                                               n_batch=1024))
 
     from src.gpt_langchain import _run_qa_db
     query = "What are the main differences between Linux and Windows?"
     # chunk_size is chars for each of k=4 chunks
+    langchain_mode = 'wiki'
     ret = _run_qa_db(query=query, use_openai_model=False, use_openai_embedding=False, text_limit=None, chunk=True,
                      chunk_size=128 * 1,  # characters, and if k=4, then 4*4*128 = 2048 chars ~ 512 tokens
                      hf_embedding_model="sentence-transformers/all-MiniLM-L6-v2",
-                     langchain_mode='wiki',
+                     langchain_mode_types=dict(langchain_mode=LangChainTypes.SHARED.value),
+                     langchain_mode=langchain_mode,
                      langchain_action=LangChainAction.QUERY.value,
                      langchain_agents=[],
                      db_type=db_type,
                      prompt_type='llama2',
                      langchain_only_model=True,
                      model_name=model_name, model=model, tokenizer=tokenizer,
+                     llamacpp_dict=dict(n_gpu_layers=100, use_mlock=True, n_batch=1024),
                      )
     check_ret(ret)
 
@@ -331,13 +368,15 @@ def test_qa_wiki_db_chunk_hf_dbs_llama(db_type):
 def test_qa_daidocs_db_chunk_openai():
     from src.gpt_langchain import _run_qa_db
     query = "Which config.toml enables pytorch for NLP?"
+    langchain_mode = 'DriverlessAI docs'
     ret = _run_qa_db(query=query, use_openai_model=True, use_openai_embedding=True, text_limit=256, chunk=True,
                      db_type='faiss',
                      hf_embedding_model="",
                      chunk_size=256,
-                     langchain_mode='DriverlessAI docs',
+                     langchain_mode_types=dict(langchain_mode=LangChainTypes.SHARED.value),
+                     langchain_mode=langchain_mode,
                      langchain_action=LangChainAction.QUERY.value,
-                     langchain_agents=[])
+                     langchain_agents=[], llamacpp_dict={})
     check_ret(ret)
 
 
@@ -346,13 +385,15 @@ def test_qa_daidocs_db_chunk_openai():
 def test_qa_daidocs_db_chunk_openaiembedding_hfmodel():
     from src.gpt_langchain import _run_qa_db
     query = "Which config.toml enables pytorch for NLP?"
+    langchain_mode = 'DriverlessAI docs'
     ret = _run_qa_db(query=query, use_openai_model=False, use_openai_embedding=True, text_limit=None, chunk=True,
                      chunk_size=128,
                      hf_embedding_model="",
                      db_type='faiss',
-                     langchain_mode='DriverlessAI docs',
+                     langchain_mode_types=dict(langchain_mode=LangChainTypes.SHARED.value),
+                     langchain_mode=langchain_mode,
                      langchain_action=LangChainAction.QUERY.value,
-                     langchain_agents=[])
+                     langchain_agents=[], llamacpp_dict={})
     check_ret(ret)
 
 
@@ -379,7 +420,7 @@ def test_get_dai_db_dir():
 @wrap_test_forked
 def test_make_add_db(repeat, db_type):
     kill_weaviate(db_type)
-    from src.gradio_runner import get_source_files, get_source_files_given_langchain_mode, get_db, update_user_db, \
+    from src.gpt_langchain import get_source_files, get_source_files_given_langchain_mode, get_any_db, update_user_db, \
         get_sources, update_and_get_source_files_given_langchain_mode
     from src.make_db import make_db_main
     from src.gpt_langchain import path_to_docs
@@ -413,7 +454,7 @@ def test_make_add_db(repeat, db_type):
                                                            add_if_exists=False,
                                                            collection_name='MyData',
                                                            fail_any_exception=True, db_type=db_type)
-                    db1 = {LangChainMode.MY_DATA.value: [dbmy, 'foouuid']}
+                    db1 = {LangChainMode.MY_DATA.value: [dbmy, 'foouuid', 'foousername']}
                     assert dbmy is not None
                     docs1 = dbmy.similarity_search("World")
                     assert len(docs1) == 1 + (1 if db_type == 'chroma' else 0)
@@ -423,10 +464,21 @@ def test_make_add_db(repeat, db_type):
                     # some db testing for gradio UI/client
                     get_source_files(db=db)
                     get_source_files(db=dbmy)
-                    get_source_files_given_langchain_mode(db1, langchain_mode=langchain_mode, dbs={langchain_mode: db})
-                    get_source_files_given_langchain_mode(db1, langchain_mode='MyData', dbs={})
-                    get_db(db1, langchain_mode='UserData', dbs={langchain_mode: db})
-                    get_db(db1, langchain_mode='MyData', dbs={})
+                    selection_docs_state1 = dict(langchain_modes=[langchain_mode], langchain_mode_paths={},
+                                                 langchain_mode_types={})
+                    requests_state1 = dict()
+                    get_source_files_given_langchain_mode(db1, selection_docs_state1, requests_state1, None,
+                                                          langchain_mode, dbs={langchain_mode: db})
+                    get_source_files_given_langchain_mode(db1, selection_docs_state1, requests_state1, None,
+                                                          langchain_mode='MyData', dbs={})
+                    get_any_db(db1, langchain_mode='UserData',
+                               langchain_mode_paths=selection_docs_state1['langchain_mode_paths'],
+                               langchain_mode_types=selection_docs_state1['langchain_mode_types'],
+                               dbs={langchain_mode: db})
+                    get_any_db(db1, langchain_mode='MyData',
+                               langchain_mode_paths=selection_docs_state1['langchain_mode_paths'],
+                               langchain_mode_types=selection_docs_state1['langchain_mode_types'],
+                               dbs={})
 
                     msg1up = "Beefy Chicken"
                     test_file2 = os.path.join(tmp_user_path, 'test2.txt')
@@ -440,20 +492,23 @@ def test_make_add_db(repeat, db_type):
                                   migrate_embedding_model=True,
                                   caption_loader=False,
                                   enable_captions=False,
+                                  enable_doctr=False,
                                   captions_model="Salesforce/blip-image-captioning-base",
                                   enable_ocr=False,
                                   enable_pdf_ocr='auto',
                                   verbose=False,
                                   is_url=False, is_txt=False)
                     langchain_mode2 = 'MyData'
-                    selection_docs_state1 = dict(langchain_modes=[langchain_mode2],
+                    selection_docs_state2 = dict(langchain_modes=[langchain_mode2],
                                                  langchain_mode_paths={},
-                                                 visible_langchain_modes=[langchain_mode2])
+                                                 langchain_mode_types={})
+                    requests_state2 = dict()
                     z1, z2, source_files_added, exceptions = update_user_db(test_file2_my, db1,
-                                                                            selection_docs_state1,
-                                                                            chunk,
-                                                                            chunk_size,
+                                                                            selection_docs_state2,
+                                                                            requests_state2,
                                                                             langchain_mode2,
+                                                                            chunk=chunk,
+                                                                            chunk_size=chunk_size,
                                                                             dbs={}, db_type=db_type,
                                                                             **kwargs)
                     assert z1 is None
@@ -462,13 +517,15 @@ def test_make_add_db(repeat, db_type):
                     assert len(exceptions) == 0
 
                     langchain_mode = 'UserData'
-                    selection_docs_state2 = dict(langchain_modes=[langchain_mode],
+                    selection_docs_state1 = dict(langchain_modes=[langchain_mode],
                                                  langchain_mode_paths={langchain_mode: tmp_user_path},
-                                                 visible_langchain_modes=[langchain_mode])
+                                                 langchain_mode_types={langchain_mode: LangChainTypes.SHARED.value})
                     z1, z2, source_files_added, exceptions = update_user_db(test_file2, db1,
-                                                                            selection_docs_state2,
-                                                                            chunk, chunk_size,
+                                                                            selection_docs_state1,
+                                                                            requests_state1,
                                                                             langchain_mode,
+                                                                            chunk=chunk,
+                                                                            chunk_size=chunk_size,
                                                                             dbs={langchain_mode: db},
                                                                             db_type=db_type,
                                                                             **kwargs)
@@ -476,18 +533,24 @@ def test_make_add_db(repeat, db_type):
                     assert langchain_mode == z2
                     assert z1 is None
                     docs_state0 = [x.name for x in list(DocumentSubset)]
-                    get_sources(db1, langchain_mode, dbs={langchain_mode: db}, docs_state0=docs_state0)
-                    get_sources(db1, 'MyData', dbs={}, docs_state0=docs_state0)
+                    get_sources(db1, selection_docs_state1, {}, langchain_mode, dbs={langchain_mode: db},
+                                docs_state0=docs_state0)
+                    get_sources(db1, selection_docs_state1, {}, 'MyData', dbs={}, docs_state0=docs_state0)
+                    selection_docs_state1['langchain_mode_paths'] = {langchain_mode: tmp_user_path}
                     kwargs2 = dict(first_para=False,
                                    text_limit=None, chunk=chunk, chunk_size=chunk_size,
-                                   langchain_mode_paths={langchain_mode: tmp_user_path}, db_type=db_type,
+                                   db_type=db_type,
                                    hf_embedding_model=kwargs['hf_embedding_model'],
                                    migrate_embedding_model=kwargs['migrate_embedding_model'],
                                    load_db_if_exists=True,
                                    n_jobs=-1, verbose=False)
-                    update_and_get_source_files_given_langchain_mode(db1, langchain_mode, dbs={langchain_mode: db},
+                    update_and_get_source_files_given_langchain_mode(db1,
+                                                                     selection_docs_state1, requests_state1,
+                                                                     langchain_mode, dbs={langchain_mode: db},
                                                                      **kwargs2)
-                    update_and_get_source_files_given_langchain_mode(db1, 'MyData', dbs={}, **kwargs2)
+                    update_and_get_source_files_given_langchain_mode(db1,
+                                                                     selection_docs_state2, requests_state2,
+                                                                     'MyData', dbs={}, **kwargs2)
 
                     assert path_to_docs(test_file2_my, db_type=db_type)[0].metadata['source'] == test_file2_my
                     extra = 1 if db_type == 'chroma' else 0
@@ -719,6 +782,46 @@ def test_md_add(db_type):
 
 @pytest.mark.parametrize("db_type", db_types)
 @wrap_test_forked
+def test_rst_add(db_type):
+    kill_weaviate(db_type)
+    from src.make_db import make_db_main
+    with tempfile.TemporaryDirectory() as tmp_persist_directory:
+        with tempfile.TemporaryDirectory() as tmp_user_path:
+            url = 'https://gist.githubusercontent.com/javiertejero/4585196/raw/21786e2145c0cc0a202ffc4f257f99c26985eaea/README.rst'
+            test_file1 = os.path.join(tmp_user_path, 'demo.rst')
+            download_simple(url, dest=test_file1)
+            test_file1 = os.path.join(tmp_user_path, os.path.basename(test_file1))
+            db, collection_name = make_db_main(persist_directory=tmp_persist_directory, user_path=tmp_user_path,
+                                               fail_any_exception=True, db_type=db_type)
+            assert db is not None
+            docs = db.similarity_search("Font Faces - Emphasis and Examples")
+            assert len(docs) == 4
+            assert 'Within paragraphs, inline markup' in docs[0].page_content
+            assert os.path.normpath(docs[0].metadata['source']) == os.path.normpath(test_file1)
+
+
+@pytest.mark.parametrize("db_type", db_types)
+@wrap_test_forked
+def test_xml_add(db_type):
+    kill_weaviate(db_type)
+    from src.make_db import make_db_main
+    with tempfile.TemporaryDirectory() as tmp_persist_directory:
+        with tempfile.TemporaryDirectory() as tmp_user_path:
+            url = 'https://gist.githubusercontent.com/theresajayne/1409545/raw/a8b46e7799805e86f4339172c9778fa55afb0f30/gistfile1.txt'
+            test_file1 = os.path.join(tmp_user_path, 'demo.xml')
+            download_simple(url, dest=test_file1)
+            test_file1 = os.path.join(tmp_user_path, os.path.basename(test_file1))
+            db, collection_name = make_db_main(persist_directory=tmp_persist_directory, user_path=tmp_user_path,
+                                               fail_any_exception=True, db_type=db_type)
+            assert db is not None
+            docs = db.similarity_search("Entrance Hall")
+            assert len(docs) == 4 if db_type == 'chroma' else 3
+            assert 'Ensuite Bathroom' in docs[0].page_content
+            assert os.path.normpath(docs[0].metadata['source']) == os.path.normpath(test_file1)
+
+
+@pytest.mark.parametrize("db_type", db_types)
+@wrap_test_forked
 def test_eml_add(db_type):
     kill_weaviate(db_type)
     from src.make_db import make_db_main
@@ -913,60 +1016,187 @@ def test_msg_add(db_type):
             assert os.path.normpath(docs[0].metadata['source']) == os.path.normpath(test_file1)
 
 
+os.system('cd tests ; unzip -o driverslicense.jpeg.zip')
+
+
+@pytest.mark.parametrize("file", ['data/pexels-evg-kowalievska-1170986_small.jpg',
+                                  'tests/driverslicense.jpeg.zip',
+                                  'tests/driverslicense.jpeg'])
 @pytest.mark.parametrize("db_type", db_types)
+@pytest.mark.parametrize("enable_doctr", [False, True])
+@pytest.mark.parametrize("enable_ocr", [False, True])
+@pytest.mark.parametrize("enable_captions", [False, True])
+@pytest.mark.parametrize("pre_load_caption_model", [False, True])
+@pytest.mark.parametrize("caption_gpu", [False, True])
+@pytest.mark.parametrize("captions_model", [None, 'Salesforce/blip2-flan-t5-xl'])
 @wrap_test_forked
-def test_png_add(db_type):
+def test_png_add(captions_model, caption_gpu, pre_load_caption_model, enable_captions,
+                 enable_doctr, enable_ocr, db_type, file):
+    if not have_gpus and caption_gpu:
+        # if have no GPUs, don't enable caption on GPU
+        return
+    if not caption_gpu and captions_model == 'Salesforce/blip2-flan-t5-xl':
+        # RuntimeError: "slow_conv2d_cpu" not implemented for 'Half'
+        return
+    if not enable_captions and pre_load_caption_model:
+        # nothing to preload if not enabling captions
+        return
+    if captions_model == 'Salesforce/blip2-flan-t5-xl' and not (have_gpus and mem_gpus[0] > 20 * 1024 ** 3):
+        # requires GPUs and enough memory to run
+        return
+    if not (enable_ocr or enable_doctr or enable_captions):
+        # nothing enabled for images
+        return
     kill_weaviate(db_type)
-    return run_png_add(captions_model=None, caption_gpu=False, db_type=db_type)
+    return run_png_add(captions_model=captions_model, caption_gpu=caption_gpu,
+                       pre_load_caption_model=pre_load_caption_model,
+                       enable_captions=enable_captions,
+                       enable_ocr=enable_ocr,
+                       enable_doctr=enable_doctr,
+                       db_type=db_type,
+                       file=file)
 
 
-@pytest.mark.skipif(not have_gpus, reason="requires GPUs to run")
-@pytest.mark.parametrize("db_type", db_types)
-@wrap_test_forked
-def test_png_add_gpu(db_type):
-    kill_weaviate(db_type)
-    return run_png_add(captions_model=None, caption_gpu=True, db_type=db_type)
-
-
-@pytest.mark.skipif(not have_gpus, reason="requires GPUs to run")
-@pytest.mark.parametrize("db_type", db_types)
-@wrap_test_forked
-def test_png_add_gpu_preload(db_type):
-    kill_weaviate(db_type)
-    return run_png_add(captions_model=None, caption_gpu=True, pre_load_caption_model=True, db_type=db_type)
-
-
-@pytest.mark.skipif(not (have_gpus and mem_gpus[0] > 20 * 1024 ** 3), reason="requires GPUs and enough memory to run")
-@pytest.mark.parametrize("db_type", db_types)
-@wrap_test_forked
-def test_png_add_gpu_blip2(db_type):
-    kill_weaviate(db_type)
-    return run_png_add(captions_model='Salesforce/blip2-flan-t5-xl', caption_gpu=True, db_type=db_type)
-
-
-def run_png_add(captions_model=None, caption_gpu=False, pre_load_caption_model=False, db_type='chroma'):
+def run_png_add(captions_model=None, caption_gpu=False,
+                pre_load_caption_model=False,
+                enable_captions=True,
+                enable_ocr=False,
+                enable_doctr=False,
+                db_type='chroma',
+                file='data/pexels-evg-kowalievska-1170986_small.jpg'):
     from src.make_db import make_db_main
     with tempfile.TemporaryDirectory() as tmp_persist_directory:
         with tempfile.TemporaryDirectory() as tmp_user_path:
-            test_file1 = 'data/pexels-evg-kowalievska-1170986_small.jpg'
+            test_file1 = file
             if not os.path.isfile(test_file1):
                 # see if ran from tests directory
-                test_file1 = '../data/pexels-evg-kowalievska-1170986_small.jpg'
+                test_file1 = os.path.join('../', file)
                 assert os.path.isfile(test_file1)
             test_file1 = os.path.abspath(test_file1)
             shutil.copy(test_file1, tmp_user_path)
             test_file1 = os.path.join(tmp_user_path, os.path.basename(test_file1))
             db, collection_name = make_db_main(persist_directory=tmp_persist_directory, user_path=tmp_user_path,
-                                               fail_any_exception=True, enable_ocr=False, enable_pdf_ocr='auto',
+                                               fail_any_exception=True,
+                                               enable_ocr=enable_ocr,
+                                               enable_pdf_ocr='auto',
                                                caption_gpu=caption_gpu,
                                                pre_load_caption_model=pre_load_caption_model,
-                                               captions_model=captions_model, db_type=db_type,
-                                               add_if_exists=False)
-            assert db is not None
-            docs = db.similarity_search("cat")
-            assert len(docs) == 1 + (1 if db_type == 'chroma' else 0)
-            assert 'a cat sitting on a window' in docs[0].page_content
-            assert os.path.normpath(docs[0].metadata['source']) == os.path.normpath(test_file1)
+                                               captions_model=captions_model,
+                                               enable_captions=enable_captions,
+                                               enable_doctr=enable_doctr,
+                                               db_type=db_type,
+                                               add_if_exists=False,
+                                               fail_if_no_sources=False)
+            if enable_captions and not enable_doctr and not enable_ocr:
+                if 'kowalievska' in file:
+                    docs = db.similarity_search("cat")
+                    assert len(docs) == 1 + (1 if db_type == 'chroma' else 0)
+                    assert 'a cat sitting on a window' in docs[0].page_content
+                    check_source(docs, test_file1)
+                else:
+                    docs = db.similarity_search("license")
+                    assert len(docs) == 1 + (1 if db_type == 'chroma' else 0)
+                    check_content_captions(docs, captions_model)
+                    check_source(docs, test_file1)
+            elif not enable_captions and not enable_doctr and enable_ocr:
+                if 'kowalievska' in file:
+                    assert db is None
+                else:
+                    docs = db.similarity_search("license")
+                    assert len(docs) == 1 + (1 if db_type == 'chroma' else 0)
+                    check_content_ocr(docs)
+                    check_source(docs, test_file1)
+            elif not enable_captions and enable_doctr and not enable_ocr:
+                if 'kowalievska' in file:
+                    assert db is None
+                else:
+                    docs = db.similarity_search("license")
+                    assert len(docs) == 1 + (1 if db_type == 'chroma' else 0)
+                    check_content_doctr(docs)
+                    check_source(docs, test_file1)
+            elif not enable_captions and enable_doctr and enable_ocr:
+                if 'kowalievska' in file:
+                    assert db is None
+                else:
+                    docs = db.similarity_search("license")
+                    assert len(docs) == 2 + (2 if db_type == 'chroma' else 0)
+                    check_content_doctr(docs)
+                    check_content_ocr(docs)
+                    check_source(docs, test_file1)
+            elif enable_captions and not enable_doctr and enable_ocr:
+                if 'kowalievska' in file:
+                    docs = db.similarity_search("cat")
+                    assert len(docs) == 1 + (1 if db_type == 'chroma' else 0)
+                    assert 'a cat sitting on a window' in docs[0].page_content
+                    check_source(docs, test_file1)
+                else:
+                    docs = db.similarity_search("license")
+                    assert len(docs) == 2 + (2 if db_type == 'chroma' else 0)
+                    check_content_ocr(docs)
+                    check_content_captions(docs, captions_model)
+                    check_source(docs, test_file1)
+            elif enable_captions and enable_doctr and not enable_ocr:
+                if 'kowalievska' in file:
+                    docs = db.similarity_search("cat")
+                    assert len(docs) == 1 + (1 if db_type == 'chroma' else 0)
+                    assert 'a cat sitting on a window' in docs[0].page_content
+                    check_source(docs, test_file1)
+                else:
+                    docs = db.similarity_search("license")
+                    assert len(docs) == 2 + (2 if db_type == 'chroma' else 0)
+                    check_content_doctr(docs)
+                    check_content_captions(docs, captions_model)
+                    check_source(docs, test_file1)
+            elif enable_captions and enable_doctr and enable_ocr:
+                if 'kowalievska' in file:
+                    docs = db.similarity_search("cat")
+                    assert len(docs) == 1 + (1 if db_type == 'chroma' else 0)
+                    assert 'a cat sitting on a window' in docs[0].page_content
+                    check_source(docs, test_file1)
+                else:
+                    if db_type == 'chroma':
+                        assert len(db.get()['documents']) == 6
+                    docs = db.similarity_search("license")
+                    # because search can't find DRIVERLICENSE from DocTR one
+                    assert len(docs) == 2 + (2 if db_type == 'chroma' else 1)
+                    check_content_ocr(docs)
+                    #check_content_doctr(docs)
+                    check_content_captions(docs, captions_model)
+                    check_source(docs, test_file1)
+            else:
+                raise NotImplementedError()
+
+
+def check_content_captions(docs, caption_model):
+    assert any(['license' in docs[ix].page_content for ix in range(len(docs))])
+    if caption_model is not None and 'blip2' in caption_model:
+        str_expected = """california driver license with a woman's face on it california driver license"""
+    else:
+        str_expected = """a california driver's license with a picture of a woman's face and a picture of a man's face"""
+    assert any([str_expected in docs[ix].page_content for ix in range(len(docs))])
+
+
+def check_content_doctr(docs):
+    assert any(['DRIVERLICENSE' in docs[ix].page_content for ix in range(len(docs))])
+    assert any(['California' in docs[ix].page_content for ix in range(len(docs))])
+    assert any(['EXP 08/31/2014' in docs[ix].page_content for ix in range(len(docs))])
+    assert any(['VETERAN' in docs[ix].page_content for ix in range(len(docs))])
+
+
+def check_content_ocr(docs):
+    # hi_res
+    #assert any(['Californias' in docs[ix].page_content for ix in range(len(docs))])
+    # ocr_only
+    assert any(['DRIVER LICENSE A' in docs[ix].page_content for ix in range(len(docs))])
+
+
+def check_source(docs, test_file1):
+    if test_file1.endswith('.zip'):
+        # when zip, adds dir etc.:
+        # AssertionError: assert '/tmp/tmp63h5dxxv/driverslicense.jpeg.zip_d7d5f561-6/driverslicense.jpeg' == '/tmp/tmp63h5dxxv/driverslicense.jpeg.zip'
+        assert os.path.basename(os.path.normpath(test_file1)) in os.path.normpath(docs[0].metadata['source'])
+    else:
+        assert os.path.normpath(docs[0].metadata['source']) == os.path.normpath(test_file1)
 
 
 @pytest.mark.parametrize("db_type", db_types)
@@ -1003,6 +1233,131 @@ Microsoft  Word developed RTF for document transportability and gives a user acc
             assert len(docs) == 4
             assert 'Microsoft' in docs[1].page_content
             assert os.path.normpath(docs[1].metadata['source']) == os.path.normpath(test_file1)
+
+
+# Windows is not supported with EmbeddedDB. Please upvote the feature request if you want this: https://github.com/weaviate/weaviate-python-client/issues/239
+@pytest.mark.parametrize("db_type", ['chroma'])
+@wrap_test_forked
+def test_url_more_add(db_type):
+    kill_weaviate(db_type)
+    from src.make_db import make_db_main
+    with tempfile.TemporaryDirectory() as tmp_persist_directory:
+        url = 'https://edition.cnn.com/2023/08/19/europe/ukraine-f-16s-counteroffensive-intl/index.html'
+        db, collection_name = make_db_main(persist_directory=tmp_persist_directory, url=url, fail_any_exception=True,
+                                           db_type=db_type)
+        assert db is not None
+        docs = db.similarity_search("Ukraine")
+        assert len(docs) == 4
+        assert 'Ukraine' in docs[0].page_content
+
+
+json_data = {
+    "quiz": {
+        "sport": {
+            "q1": {
+                "question": "Which one is correct team name in NBA?",
+                "options": [
+                    "New York Bulls",
+                    "Los Angeles Kings",
+                    "Golden State Warriros",
+                    "Huston Rocket"
+                ],
+                "answer": "Huston Rocket"
+            }
+        },
+        "maths": {
+            "q1": {
+                "question": "5 + 7 = ?",
+                "options": [
+                    "10",
+                    "11",
+                    "12",
+                    "13"
+                ],
+                "answer": "12"
+            },
+            "q2": {
+                "question": "12 - 8 = ?",
+                "options": [
+                    "1",
+                    "2",
+                    "3",
+                    "4"
+                ],
+                "answer": "4"
+            }
+        }
+    }
+}
+
+
+@pytest.mark.parametrize("db_type", db_types)
+@wrap_test_forked
+def test_json_add(db_type):
+    kill_weaviate(db_type)
+    from src.make_db import make_db_main
+    with tempfile.TemporaryDirectory() as tmp_persist_directory:
+        with tempfile.TemporaryDirectory() as tmp_user_path:
+            # too slow:
+            # eval_filename = 'ShareGPT_V3_unfiltered_cleaned_split_no_imsorry.json'
+            # url = "https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/%s" % eval_filename
+            test_file1 = os.path.join(tmp_user_path, 'sample.json')
+            # download_simple(url, dest=test_file1)
+
+            with open(test_file1, 'wt') as f:
+                f.write(json.dumps(json_data))
+
+            db, collection_name = make_db_main(persist_directory=tmp_persist_directory, user_path=tmp_user_path,
+                                               fail_any_exception=True, db_type=db_type,
+                                               add_if_exists=False)
+            assert db is not None
+            docs = db.similarity_search("NBA")
+            assert len(docs) == 2 if db_type == 'chroma' else 1
+            assert 'Bulls' in docs[0].page_content
+            assert os.path.normpath(docs[0].metadata['source']) == os.path.normpath(test_file1)
+
+
+@pytest.mark.parametrize("db_type", db_types)
+@wrap_test_forked
+def test_jsonl_gz_add(db_type):
+    kill_weaviate(db_type)
+    from src.make_db import make_db_main
+    with tempfile.TemporaryDirectory() as tmp_persist_directory:
+        with tempfile.TemporaryDirectory() as tmp_user_path:
+            # url = "https://huggingface.co/datasets/OpenAssistant/oasst1/resolve/main/2023-04-12_oasst_spam.messages.jsonl.gz"
+            test_file1 = os.path.join(tmp_user_path, 'sample.jsonl.gz')
+            # download_simple(url, dest=test_file1)
+
+            with gzip.open(test_file1, 'wb') as f:
+                f.write(json.dumps(json_data).encode())
+
+            db, collection_name = make_db_main(persist_directory=tmp_persist_directory, user_path=tmp_user_path,
+                                               fail_any_exception=True, db_type=db_type,
+                                               add_if_exists=False)
+            assert db is not None
+            docs = db.similarity_search("NBA")
+            assert len(docs) == 2 if db_type == 'chroma' else 1
+            assert 'Bulls' in docs[0].page_content
+            assert os.path.normpath(docs[0].metadata['source']) == os.path.normpath(test_file1).replace('.gz', '')
+
+
+@wrap_test_forked
+def test_url_more_subunit():
+    url = 'https://edition.cnn.com/2023/08/19/europe/ukraine-f-16s-counteroffensive-intl/index.html'
+    from langchain.document_loaders import UnstructuredURLLoader
+    docs1 = UnstructuredURLLoader(urls=[url]).load()
+    docs1 = [x for x in docs1 if x.page_content]
+    assert len(docs1) > 0
+
+    from langchain.document_loaders import PlaywrightURLLoader
+    docs1 = PlaywrightURLLoader(urls=[url]).load()
+    docs1 = [x for x in docs1 if x.page_content]
+    assert len(docs1) > 0
+
+    from langchain.document_loaders import SeleniumURLLoader
+    docs1 = SeleniumURLLoader(urls=[url]).load()
+    docs1 = [x for x in docs1 if x.page_content]
+    assert len(docs1) > 0
 
 
 if __name__ == '__main__':

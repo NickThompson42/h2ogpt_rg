@@ -2,23 +2,36 @@
 
 ### Adding Models
 
-One can choose any Hugging Face model or quantized GGLM model file in h2oGPT.
+One can choose any Hugging Face model or quantized GGML model file in h2oGPT.
 
-Hugging Face models are passed via `--base_model` in all cases, with an extra `--load_gptq` for GPTQ models, e.g., by [TheBloke](https://huggingface.co/TheBloke).
+Hugging Face models are passed via `--base_model` in all cases, with an extra `--load_gptq` for GPTQ models, e.g., by [TheBloke](https://huggingface.co/TheBloke).  Hugging Face models are automatically downloaded to the Hugging Face .cache folder (in home folder).
 
-GLLM v3 quantized models are supported, and [TheBloke](https://huggingface.co/TheBloke) also has many of those.  These are not passed via `--base_model`, but instead are typically LLaMa-based and are supported via llama.cpp for which `--base_model=llama`.  GPT4All models are also supported.  In this GLLM case, one needs to edit the `.env_gpt4all` file for whichever model type one wants to change.  E.g.:
+GGML v3 quantized models are supported, and [TheBloke](https://huggingface.co/TheBloke) also has many of those, e.g.
+```bash
+python generate.py --base_model=llama --model_path_llama=llama-2-7b-chat.ggmlv3.q8_0.bin --max_seq_len=4096
 ```
-model_path_llama (e.g. llama-2-7b-chat.ggmlv3.q8_0.bin)
-model_name_gptj (e.g. ggml-gpt4all-j-v1.3-groovy.bin)
-model_name_gpt4all_llama (e.g. ggml-wizardLM-7B.q4_2.bin)
+For GGML models, always good to pass `--max_seq_len` directly.  When passing the filename like above, we assume one has previously downloaded the model to the local path, but if one passes a URL, then we download the file for you.
+You can also pass a URL for automatic downloading (which will not re-download if file already exists):
+```bash
+python generate.py --base_model=llama --model_path_llama=https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGML/resolve/main/llama-2-7b-chat.ggmlv3.q8_0.bin --max_seq_len=4096
 ```
-respectively, are for `--base_model=llama`, `--base_model=gptj`, and `--base_model=gpt4all_llama`.  In those cases, consider changing `max_tokens=1792` in that file as well, e.g. larger for LLaMa2 if your hardware can handle it.  See [README_CPU.md](README_CPU.md) and [README_GPU.md](README_GPU.md) for more information on controlling these parameters.
+for any TheBloke GGML v3 models.
 
-For GGML models, always good to pass `--max_seq_len` directly.
+GPT4All models are supported, which are automatically downloaded to a GPT4All cache folder (in the home folder).  E.g.
+```bash
+python generate.py --base_model=gptj --model_name_gptj=ggml-gpt4all-j-v1.3-groovy.bin
+```
+for GPTJ models (also downloaded automatically):
+```bash
+python generate.py --base_model=gpt4all_llama --model_name_gpt4all_llama=ggml-wizardLM-7B.q4_2.bin
+```
+for GPT4All LLaMa models.
+
+See [README_CPU.md](README_CPU.md) and [README_GPU.md](README_GPU.md) for more information on controlling these parameters.
 
 ### Adding Prompt Templates
 
-After providing a `--base_model` and perhaps changing `.env_gpt4all`, one needs to consider if an existing `prompt_type` will work or a new one is required.  E.g. for Vicuna models, a well-defined `prompt_type` is used which we support automatically for specific model names.  If the model is in `prompter.py` as associated with some `prompt_type` name, then we added it already.  See models that are currently supported in this automatic way in [prompter.py](../src/prompter.py) and [enums.py](../src/enums.py).
+After specifying a model, one needs to consider if an existing `prompt_type` will work or a new one is required.  E.g. for Vicuna models, a well-defined `prompt_type` is used which we support automatically for specific model names.  If the model is in `prompter.py` as associated with some `prompt_type` name, then we added it already.  See models that are currently supported in this automatic way in [prompter.py](../src/prompter.py) and [enums.py](../src/enums.py).
 
 If we do not list the model in `prompter.py`, then if you find a `prompt_type` by name that works for your new model, you can pass `--prompt_type=<NAME>` for some prompt_type `<NAME>`, and we will use that for the new model.
 
@@ -92,6 +105,44 @@ However, in some cases, you need to add a new prompt structure because the model
 
 In either case, if the model card doesn't have that information, you'll need to ask around.  Sometimes, prompt information will be in their pipeline file or in a GitHub repository associated with the model with training of inference code.  Or sometimes the model builds upon another, and you should look at the original model card.  You can also  ask in the community section on Hugging Face for that model card.
 
+### Add new Embedding Model
+
+The option `--use_openai_embedding` set to `True` or `False` controls whether use OpenAI embedding, `--hf_embedding_model` set to some HuggingFace model name sets that as embedding model if not using OpenAI.  The setting `--migrate_embedding_model` as `True` or `False` chooses whether to migrate to new chosen embeddings or stick with existing/original embedding for a given database.  The option `--cut_distance` as float chooses the distance above which to avoid using document sources.  The default is 1.64, tuned for  Mini and instructor-large.  One can pass `--cut_distance=100000` to avoid any filter.  E.g.
+```bash
+python generate.py --base_model=h2oai/h2ogpt-4096-llama2-13b-chat  --score_model=None --langchain_mode='UserData' --user_path=user_path --use_auth_token=True --hf_embedding_model=BAAI/bge-large-en --cut_distance=1000000
+```
+
+### In-Context learning via Prompt Engineering
+
+For arbitrary tasks, good to use uncensored models like [Falcon 40 GM](https://huggingface.co/h2oai/h2ogpt-gm-oasst1-en-2048-falcon-40b-v2).  If censored is ok, then [LLama-2 Chat](https://huggingface.co/h2oai/h2ogpt-4096-llama2-70b-chat) are ok. Choose model size according to your system specs.
+
+For the UI, CLI, or EVAL this means editing the `System Pre-Context` text box in expert settings.  When starting h2oGPT, one can pass `--context` or `--iinput` for setting a fixed default context choice and fixed default instruction choice.  Note if no context is passed but `--chat_context=True`, then that function sets the context.
+
+Or for API, passing `context` variable.  This can be filled with arbitrary things, including actual conversations to prime the model, although if a conversation then need to put in prompts like:
+```python
+from gradio_client import Client
+import ast
+
+HOST_URL = "http://localhost:7860"
+client = Client(HOST_URL)
+
+# string of dict for input
+prompt = 'Who are you?'
+# falcon, but falcon7B is not good at this:
+#context = """<|answer|>I am a pixie filled with fairy dust<|endoftext|><|prompt|>What kind of pixie are you?<|endoftext|><|answer|>Magical<|endoftext|>"""
+# LLama2 7B handles this well:
+context = """[/INST] I am a pixie filled with fairy dust </s><s>[INST] What kind of pixie are you? [/INST] Magical"""
+kwargs = dict(instruction_nochat=prompt, context=context)
+res = client.predict(str(dict(kwargs)), api_name='/submit_nochat_api')
+
+# string of dict for output
+response = ast.literal_eval(res)['response']
+print(response)
+```
+See for example: https://github.com/h2oai/h2ogpt/blob/d3334233ca6de6a778707feadcadfef4249240ad/tests/test_prompter.py#L47 .
+
+Note that even if the prompting is not perfect or matches the model, smarter models will still do quite well, as long as you give their answers as part of context.
+
 ### Token access to Hugging Face models:
 
 Related to transformers.  There are two independent ways to do this (choose one):
@@ -128,6 +179,8 @@ On CPU case, a good model that's still low memory is to run:
 python generate.py --base_model='llama' --prompt_type=llama2 --hf_embedding_model=sentence-transformers/all-MiniLM-L6-v2 --langchain_mode=UserData --user_path=user_path
 ```
 
+Ensure to vary `n_gpu_layers` at CLI or in UI to smaller values to reduce offloading for smaller GPU memory boards.
+
 ### ValueError: ...offload....
 
 ```
@@ -140,6 +193,24 @@ If you see this error, then you either have insufficient GPU memory or insuffici
 ### TypeError: Chroma.init() got an unexpected keyword argument 'anonymized_telemetry'
 
 Please check your version of langchain vs. the one in requirements.txt.  Somehow the wrong version is installed.  Try to install the correct one.
+
+### bitsandbytes CUDA error
+  ```text
+  CUDA Setup failed despite GPU being available. Please run the following command to get more information:
+  E               
+  E                       python -m bitsandbytes
+  E               
+  E                       Inspect the output of the command and see if you can locate CUDA libraries. You might need to add them
+  E                       to your LD_LIBRARY_PATH. If you suspect a bug, please take the information from python -m bitsandbytes
+  E                       and open an issue at: https://github.com/TimDettmers/bitsandbytes/issues
+  ```
+
+Ensure you have cuda version supported by bitsandbytes, e.g. in Ubuntu:
+```text
+sudo update-alternatives --display cuda
+sudo update-alternatives --config cuda
+```
+and ensure you choose CUDA 12.1 if using bitsandbytes 0.39.0 since that is last version it supports.  Or upgrade bitsandbytes if that works.  Or uninstall bitsandbytes to remove 4-bit and 8-bit support, but that will also avoid the error. 
 
 ### Multiple GPUs
 
@@ -222,10 +293,9 @@ python convert.py models/7B/
 # test by running the inference
 ./main -m ./models/7B/ggml-model-q4_0.bin -n 128
 ```
-then adding an entry in the `.env_gpt4all` file like (assumes version 3 quantization)
-```.env_gpt4all
-# model path and model_kwargs
-model_path_llama=./models/7B/ggml-model-q4_0.bin
+then pass run like (assumes version 3 quantization):
+```bash
+python generate.py --base_model=llama --model_path_llama=./models/7B/ggml-model-q4_0.bin
 ```
 or wherever you placed the model with the path pointing to wherever the files are located (e.g. link from h2oGPT repo to llama.cpp repo folder), e.g.
 ```bash
@@ -251,11 +321,39 @@ then note that llama.cpp upgraded to version 3, and we use llama-cpp-python vers
 ```bash
 pip install --force-reinstall --ignore-installed --no-cache-dir llama-cpp-python==0.1.73
 ```
-to go back to the prior version.  Or specify the model using GPT4All as `--base_model='gpt4all_llama` and ensure entry exists like:
-```.env_gpt4all
-model_path_gpt4all_llama=./models/7B/ggml-model-q4_0.bin
+to go back to the prior version.  Or specify the model using GPT4All, run:
+```bash
+python generate.py --base_model=gpt4all_llama  --model_path_gpt4all_llama=./models/7B/ggml-model-q4_0.bin
 ```
 assuming that file is from version 2 quantization.
+
+### not enough memory: you tried to allocate 590938112 bytes.
+
+    If one sees: 
+    ```
+    RuntimeError: [enforce fail at ..\c10\core\impl\alloc_cpu.cpp:72] data. DefaultCPUAllocator: not enough memory: you tried to allocate 590938112 bytes.
+    ```
+    then probably CPU has insufficient memory to handle the model.  Try GGML.
+
+### WARNING: failed to allocate 258.00 MB of pinned memory: out of memory
+
+    If you see:
+    ```
+    Warning: failed to VirtualLock 17825792-byte buffer (after previously locking 1407303680 bytes): The paging file is too small for this operation to complete.
+    
+    WARNING: failed to allocate 258.00 MB of pinned memory: out of memory
+    Traceback (most recent call last):
+    ```
+    then you have insufficient pinned memory on your GPU.  You can disable pinning by setting this env before launching h2oGPT:
+* Linux:
+    ```
+    export GGML_CUDA_NO_PINNED=1
+    ```
+* Windows:
+    ```
+    setenv GGML_CUDA_NO_PINNED=1
+    ```
+
 
 ### I get the error: `The model 'OptimizedModule' is not supported for . Supported models are ...`
 
@@ -273,7 +371,7 @@ This warning can be safely ignored.
    - `SCORE_MODEL`: HF model to use for scoring prompt-response pairs, `None` for no scoring of responses,
    - `HEIGHT`: Height of Chat window,
    - `allow_upload_to_user_data`: Whether to allow uploading to Shared UserData,
-   - `allow_upload_to_my_data`: Whether to allow uploading to Scratch MyData,
+   - `allow_upload_to_my_data`: Whether to allow uploading to Personal MyData,
    - `HEIGHT`: Height of Chat window,
    - `HUGGINGFACE_SPACES`: Whether on public A10G 24GB HF spaces, sets some low-GPU-memory defaults for public access to avoid GPU memory abuse by model switching, etc.
    - `HF_HOSTNAME`: Name of HF spaces for purpose of naming log files,
@@ -284,8 +382,7 @@ This warning can be safely ignored.
    - `CUDA_VISIBLE_DEVICES`: Standard list of CUDA devices to make visible.
    - `PING_GPU`: ping GPU every few minutes for full GPU memory usage by torch, useful for debugging OOMs or memory leaks
    - `GET_GITHASH`: get git hash on startup for system info.  Avoided normally as can fail with extra messages in output for CLI mode
-   - `H2OGPT_SCRATCH_PATH`: Choose base scratch folder for scratch databases and files
-   - `H2OGPT_BASE_PATH`: Choose base folder for all files except scratch files
+   - `H2OGPT_BASE_PATH`: Choose base folder for all files except personal/scratch files
 These can be useful on HuggingFace spaces, where one sets secret tokens because CLI options cannot be used.
 
 > **_NOTE:_**  Scripts can accept different environment variables to control query arguments. For instance, if a Python script takes an argument like `--load_8bit=True`, the corresponding ENV variable would follow this format: `H2OGPT_LOAD_8BIT=True` (regardless of capitalization). It is important to ensure that the environment variable is assigned the exact value that would have been used for the script's query argument.
@@ -342,6 +439,10 @@ We post models and license and data origin details on our huggingface page: http
 Data used to fine-tune are provided on the huggingface pages for each model.  Data for foundational models are provided on their huggingface pages.  Any models trained on GPT3.5 data like ShareGPT, Vicuna, Alpaca, etc. are not commercially viable due to ToS violations w.r.t. building competitive models.  Any research-based h2oGPT models based upon Meta's weights for LLaMa are not commercially viable.
 
 Overall, we have done a significant amount of due diligence regarding data and model licenses to carefully select only fully permissive data and models for our models we license as Apache V2.  Outside our models, some "open-source" models like Vicuna, Koala, WizardLM, etc. are based upon Meta's weights for LLaMa, which is not commercially usable due to ToS violations w.r.t. non-competitive clauses well as research-only clauses.  Such models tend to also use data from GPT3.5 (ChatGPT), which is also not commercially usable due to ToS violations w.r.t. non-competitive clauses.  E.g. Alpaca data, ShareGPT data, WizardLM data, etc. all fall under that category. All open-source foundational models consume data from the internet, including the Pile or C4 (web crawl) that may contain objectionable material.  Future licenses w.r.t. new web crawls may change, but it is our understanding that existing data crawls would not be affected by any new licenses.  However, some web crawl data may contain pirated books.
+
+### AMD support
+
+Untested AMD support: Download and install [bitsandbytes on AMD](https://github.com/arlo-phoenix/bitsandbytes-rocm-5.6)
 
 #### Disclaimers
 

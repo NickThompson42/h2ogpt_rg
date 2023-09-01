@@ -5,23 +5,33 @@ Turn ★ into ⭐ (top-right corner) if you like the project!
 Query and summarize your documents or just chat with local private GPT LLMs using h2oGPT, an Apache V2 open-source project.
 
 - **Private** offline database of any documents [(PDFs, Excel, Word, Images, Code, Text, MarkDown, etc.)](docs/README_LangChain.md#supported-datatypes)
-- **Persistent** database (Chroma, Weaviate, or in-memory FAISS) using accurate embeddings (instructor-large, all-MiniLM-L6-v2, etc.)
-- **Efficient** use of context using instruct-tuned LLMs (no need for LangChain's few-shot approach)
-- **Parallel** summarization reaching 80 tokens/second output 13B LLaMa2
-- **Upload** and **View** documents via UI (control multiple collaborative or scratch collections)
-- **UI** or CLI with streaming of all models
-- **Bake-off** UI mode against many models at same time
+  - **Persistent** database (Chroma, Weaviate, or in-memory FAISS) using accurate embeddings (instructor-large, all-MiniLM-L6-v2, etc.)
+  - **Efficient** use of context using instruct-tuned LLMs (no need for LangChain's few-shot approach)
+  - **Parallel** summarization reaching 80 tokens/second output 13B LLaMa2
 - **Variety** of models supported (LLaMa2, Falcon, Vicuna, WizardLM including AutoGPTQ, 4-bit/8-bit, LORA)
-- **GPU** support from HF and LLaMa.cpp GGML models, and **CPU** support using HF, LLaMa.cpp, and GPT4ALL models
+  - **GPU** support from HF and LLaMa.cpp GGML models, and **CPU** support using HF, LLaMa.cpp, and GPT4ALL models
+- **UI** or CLI with streaming of all models
+  - **Upload** and **View** documents via UI (control multiple collaborative or personal collections)
+  - **Bake-off** UI mode against many models at same time
+  - **Easy Download** of model artifacts and control over models like LLaMa.cpp via UI
+  - **Authentication** in UI by user/password
+  - **State Preservation** in UI by user/password
 - **Linux, Docker, MAC, and Windows** support
-- **Inference Servers** support (HF TGI server, vLLM, Gradio, ExLLaMa, Replicate, OpenAI)
+  - **Easy Windows Installer** for Windows 10 64-bit
+- **Inference Servers** support (HF TGI server, vLLM, Gradio, ExLLaMa, Replicate, OpenAI, Azure OpenAI)
 - **OpenAI-compliant Python client API** for client-server control
 - **Evaluate** performance using reward models
 - **Quality** maintained with over 300 unit and integration tests taking over 4 GPU-hours
 
 ### Getting Started
 
-To quickly try out h2oGPT with LLaMa2 7B Chat, create a fresh Python 3.10 environment and run:
+[![GitHub license](https://img.shields.io/github/license/NVIDIA/nvidia-docker?style=flat-square)](https://raw.githubusercontent.com/h2oai/h2ogpt/main/LICENSE)
+![Linux](https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)
+![macOS](https://img.shields.io/badge/mac%20os-000000?style=for-the-badge&logo=macos&logoColor=F0F0F0)
+![Windows](https://img.shields.io/badge/Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white)
+![Docker](https://img.shields.io/badge/docker-%230db7ed.svg?style=for-the-badge&logo=docker&logoColor=white)
+
+To quickly try out h2oGPT on CPU with limited document Q/A capability using LLaMa2 7B Chat, create a fresh Python 3.10 environment and run:
 ```bash
 git clone https://github.com/h2oai/h2ogpt.git
 cd h2ogpt
@@ -34,11 +44,46 @@ python generate.py --base_model='llama' --prompt_type=llama2
 ```
 then go to your browser by visiting [http://127.0.0.1:7860](http://127.0.0.1:7860) or [http://localhost:7860](http://localhost:7860).
 
-For full instructions visit:
+---
 
-* [Linux](docs/README_LINUX.md)
-* [MACOS](docs/README_MACOS.md)
-* [Windows 10/11](docs/README_WINDOWS.md)
+#### Windows 10/11 64-bit with full document Q/A capability
+  * One-click Installers
+    * [h2oGPT GPU-CUDA Installer](https://h2o-release.s3.amazonaws.com/h2ogpt/h2oGPT_0.0.1_gpu.exe) (1.8GB file)
+    * [h2oGPT CPU Installer](https://h2o-release.s3.amazonaws.com/h2ogpt/h2oGPT_0.0.1_cpu.exe) (755MB file)
+
+    The installers include all dependencies for document Q/A, except models (LLM, embedding, reward) that are downloadable via UI.  After installation, go to start and run h2oGPT, and a web browser will open for h2oGPT.  To use LLaMa model, go to Models tab, select `llama` base model, then click load to download from preset URL.  Then use as normal.  To terminate the app, in task manager kill the `Python` process named `pythonw.exe` as will also show up in `nvidia-smi` if using GPUs.  Set environment variables (in system properties->advanced->environment variables) to control things:
+      * `n_jobs`: number of cores for various tasks
+      * `OMP_NUM_THREADS` thread count for LLaMa
+      * `CUDA_VISIBLE_DEVICES` which GPUs are visible
+      * Any CLI argument from `python generate.py --help` with environment variable set as `h2ogpt_x`, e.g. `h2ogpt_h2ocolors` to `False`.
+      * Set env `h2ogpt_server_name` to actual IP address for LAN to see app, e.g. `h2ogpt_server_name` to `192.168.1.172` and allow access through firewall if have Windows Defender activated.
+  * [Windows 10/11 Manual Install and Run Docs](docs/README_WINDOWS.md)
+
+---
+
+#### Linux (CPU/CUDA) with full document Q/A capability
+  * [Docker Build and Run Docs](docs/README_DOCKER.md)
+  * [Linux Manual Install and Run Docs](docs/README_LINUX.md)
+
+---
+
+#### MACOS (CPU/M1/M2) with full document Q/A capability
+* [MACOS Manual Install and Run Docs](docs/README_MACOS.md)
+
+---
+
+#### Example Models
+* [Highest accuracy and speed](https://huggingface.co/h2oai/h2ogpt-4096-llama2-70b-chat) on 16-bit with TGI/vLLM using ~48GB/GPU when in use (4xA100 high concurrency, 2xA100 for low concurrency)
+* [Middle-range accuracy](https://huggingface.co/h2oai/h2ogpt-gm-oasst1-en-2048-falcon-40b-v2) on 16-bit with TGI/vLLM using ~45GB/GPU when in use (2xA100)
+* [Small memory profile with ok accuracy](https://huggingface.co/TheBloke/Llama-2-13B-Chat-GGML) 16GB GPU if full GPU offloading
+* [Balanced accuracy and size](https://huggingface.co/h2oai/h2ogpt-4096-llama2-13b-chat) on 16-bit with TGI/vLLM using ~45GB/GPU when in use (1xA100)
+* [Smallest or CPU friendly](https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGML) 32GB system ram or 9GB GPU if full GPU offloading
+
+**GPU** mode requires CUDA support via torch and transformers. A 7B/13B model in 16-bit uses 14GB/26GB of GPU memory to store the weights (2 bytes per weight). Compression such as 4-bit precision (bitsandbytes, AWQ, GPTQ, etc.) can further reduce memory requirements down to less than 6GB when asking a question about your documents (see [low-memory mode](docs/FAQ.md#low-memory-mode)).
+
+**CPU** mode uses GPT4ALL and LLaMa.cpp, e.g. gpt4all-j, requiring about 14GB of system RAM in typical use.
+
+---
 
 ### Live Demos
 - [![img-small.png](docs/img-small.png) Live h2oGPT Document Q/A Demo](https://gpt.h2o.ai/)
@@ -46,6 +91,12 @@ For full instructions visit:
 - [🤗 Live h2oGPT Chat Demo 2](https://huggingface.co/spaces/h2oai/h2ogpt-chatbot2)
 - [![](https://colab.research.google.com/assets/colab-badge.svg) h2oGPT CPU](https://colab.research.google.com/drive/13RiBdAFZ6xqDwDKfW6BG_-tXfXiqPNQe?usp=sharing)
 - [![](https://colab.research.google.com/assets/colab-badge.svg) h2oGPT GPU](https://colab.research.google.com/drive/143-KFHs2iCqXTQLI2pFCDiR69z0dR8iE?usp=sharing)
+
+### Inference Benchmarks for Summarization & Generation
+
+* [Benchmark results for Llama2](https://github.com/h2oai/h2ogpt/blob/main/benchmarks/perf.md)
+* [pytest to create benchmark results](https://github.com/h2oai/h2ogpt/blob/main/tests/test_perf_benchmarks.py)
+* [Raw benchmark results (JSON)](https://github.com/h2oai/h2ogpt/blob/main/benchmarks/perf.json)
 
 ### Resources
 - [Discord](https://discord.gg/WKhYMWcVbq)
@@ -68,7 +119,6 @@ YouTube 4K version: https://www.youtube.com/watch?v=_iktbj4obAI
 
 ### Docs Guide
 <!--  cat README.md | ./gh-md-toc  -  But Help is heavily processed -->
-* [Supported OS and Hardware](#supported-os-and-hardware)
 * [Getting Started](#getting-started)
    * [Linux (CPU or CUDA)](docs/README_LINUX.md)
    * [MACOS (CPU or M1/M2)](docs/README_MACOS.md)
@@ -78,7 +128,7 @@ YouTube 4K version: https://www.youtube.com/watch?v=_iktbj4obAI
    * [CLI chat](docs/README_CLI.md)
    * [Gradio UI](docs/README_ui.md)
    * [Client API (Gradio, OpenAI-Compliant)](docs/README_CLIENT.md)
-   * [Inference Servers (HF TGI server, vLLM, Gradio, ExLLaMa, Replicate, OpenAI)](docs/README_InferenceServers.md)
+   * [Inference Servers (HF TGI server, vLLM, Gradio, ExLLaMa, Replicate, OpenAI, Azure OpenAI)](docs/README_InferenceServers.md)
    * [Python Wheel](docs/README_WHEEL.md)
    * [Offline Installation](docs/README_offline.md)
    * [Low Memory](docs/FAQ.md#low-memory-mode)
@@ -98,20 +148,6 @@ YouTube 4K version: https://www.youtube.com/watch?v=_iktbj4obAI
 * [Acknowledgements](#acknowledgements)
 * [Why H2O.ai?](#why-h2oai)
 * [Disclaimer](#disclaimer)
-
-### Supported OS and Hardware
-
-[![GitHub license](https://img.shields.io/github/license/NVIDIA/nvidia-docker?style=flat-square)](https://raw.githubusercontent.com/h2oai/h2ogpt/main/LICENSE)
-![Linux](https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)
-![macOS](https://img.shields.io/badge/mac%20os-000000?style=for-the-badge&logo=macos&logoColor=F0F0F0)
-![Windows](https://img.shields.io/badge/Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white)
-![Docker](https://img.shields.io/badge/docker-%230db7ed.svg?style=for-the-badge&logo=docker&logoColor=white)
-
-**GPU** mode requires CUDA support via torch and transformers.  A 6.9B (or 12GB) model in 8-bit uses 8GB (or 13GB) of GPU memory. 8-bit precision, 4-bit precision, and AutoGPTQ can further reduce memory requirements down no more than about 6.5GB when asking a question about your documents (see [low-memory mode](docs/FAQ.md#low-memory-mode)).
-
-**CPU** mode uses GPT4ALL and LLaMa.cpp, e.g. gpt4all-j, requiring about 14GB of system RAM in typical use.
-
-GPU and CPU mode tested on variety of NVIDIA GPUs in Ubuntu 18-22, but any modern Linux variant should work.  MACOS support tested on Macbook Pro running Monterey v12.3.1 using CPU mode, as well as MAC M1 using MPS.
 
 ### Roadmap
 

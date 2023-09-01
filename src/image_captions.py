@@ -15,12 +15,12 @@ from langchain.document_loaders import ImageCaptionLoader
 
 from utils import get_device, NullContext
 
-import pkg_resources
+from importlib.metadata import distribution, PackageNotFoundError
 
 try:
-    assert pkg_resources.get_distribution('bitsandbytes') is not None
+    assert distribution('bitsandbytes') is not None
     have_bitsandbytes = True
-except (pkg_resources.DistributionNotFound, AssertionError):
+except (PackageNotFoundError, AssertionError):
     have_bitsandbytes = False
 
 
@@ -187,7 +187,8 @@ class H2OImageCaptionLoader(ImageCaptionLoader):
                 context_class_cast = NullContext if self.device == 'cpu' else torch.autocast
                 with context_class_cast(self.device):
                     if self.load_half:
-                        inputs = processor(image, prompt, return_tensors="pt").half()
+                        # FIXME: RuntimeError: "slow_conv2d_cpu" not implemented for 'Half'
+                        inputs = processor(image, prompt, return_tensors="pt") #.half()
                     else:
                         inputs = processor(image, prompt, return_tensors="pt")
                     min_length = len(prompt) // 4 + self.min_new_tokens
