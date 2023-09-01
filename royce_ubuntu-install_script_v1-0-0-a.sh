@@ -2,37 +2,30 @@
 
 # install instructions
 # to install follow these steps:
-# wget https://raw.githubusercontent.com/Royce-Geospatial-Consultants/h2ogpt_rg/main/royce_install_script.sh
-# chmod +x royce_install_script.sh
-# less royce_install_script.sh # this will allow you to check the script before running it to make sure it is not compromised
-# sudo ./royce_install_script.sh # this will run the script in the codespace.
 
-#!/bin/bash
-
-## NICK! You are stuck with the nvidia driver install. for some reason you can get everything to work with human intervention, but you can't get it to automatically install properly.
+# install_h2ogpt() {
+#   wget -O royce_ubuntu-install_script_v1-0-0-a.sh https://raw.githubusercontent.com/Royce-Geospatial-Consultants/h2ogpt_rg/ubuntu_install_script/royce_>
+#   chmod +x royce_ubuntu-install_script_v1-0-0-a.sh
+#   sudo ./royce_ubuntu-install_script_v1-0-0-a.sh
+# }
 
 
 setup_environment() {
     sudo localectl set-keymap us
     sudo localectl set-x11-keymap us
 
-    # Wait for other software managers to finish
-    while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
-        echo "Waiting for other software managers to finish..."
-        sleep 5
-    done
+    # while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+    #     echo "Waiting for other software managers to finish..."
+    #     sleep 5
+    # done
 
-    # Update the system's package index
-    sudo apt update
+    # sudo apt update
+    # sudo apt install -y linux-headers-$(uname -r)
 
-    # Install kernel headers
-    sudo apt install -y linux-headers-$(uname -r)
-
-    # Wait for other software managers to finish
-    while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
-        echo "Waiting for other software managers to finish..."
-        sleep 5
-    done
+    # while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+    #     echo "Waiting for other software managers to finish..."
+    #     sleep 5
+    # done
 
     echo "Waiting 10 seconds to install NVIDIA drivers"
     sleep 10
@@ -44,69 +37,65 @@ setup_environment() {
 # Call the function to execute it
 setup_environment
 
-echo "Successfully installed NVIDIA drivers. Waiting 10 seconds before checking for the NVIDIA-SMI function check to PATH"
-sleep 10
-# Restart the display manager instead of rebooting
-# Commented out to prevent SSH disconnection
-sudo systemctl restart gdm3
-echo "Restarted the display manager. I'm going to sleep for 10 seconds to give you time to read..."
-sleep 10
-echo "I'm awake again, hi. Now I'm going to check is the nvidia-smi is on the PATH."
+# Delay replaced with a check to ensure driver is properly installed
+# if dpkg -l | grep -q 'nvidia-driver-470'; then
+#     echo "Successfully installed NVIDIA drivers."
+# else
+#     echo "NVIDIA driver installation failed."
+#     exit 1
+# fi
 
-# Function to load kernel modules
-load_kernel_modules() {
-  if ! lsmod | grep -q 'nvidia'; then
-    sudo modprobe nvidia
-  fi
-}
+# sudo systemctl restart gdm3
 
-# Check if nvidia-smi is on the PATH
-if which nvidia-smi >/dev/null 2>&1; then
-  echo "nvidia-smi is on the PATH and can be executed."
+# load_kernel_modules() {
+#   if ! lsmod | grep -q 'nvidia'; then
+#     sudo modprobe nvidia
+#   fi
+# }
 
-  # Try executing nvidia-smi
-  if ! nvidia-smi; then
-    echo "nvidia-smi found, but couldn't communicate with NVIDIA driver. Attempting to fix..."
+# # Check if nvidia-smi is on the PATH
+# if which nvidia-smi >/dev/null 2>&1; then
+#   echo "nvidia-smi is on the PATH and can be executed."
+
+#   # Try executing nvidia-smi
+#   if ! nvidia-smi; then
+#     echo "nvidia-smi found, but couldn't communicate with NVIDIA driver. Attempting to fix..."
     
-    # Step 1: Load kernel modules
-    echo "Loading kernel modules..."
-    load_kernel_modules
+#     # Step 1: Load kernel modules
+#     echo "Loading kernel modules..."
+#     load_kernel_modules
 
-    # Re-try executing nvidia-smi
-    if nvidia-smi; then
-      echo "Successfully fixed the issue by loading kernel modules."
-      exit 0
-    else
-      echo "Failed to fix the issue. Further investigation is needed."
-      exit 1
-    fi
-  fi
+#     # Re-try executing nvidia-smi
+#     if nvidia-smi; then
+#       echo "Successfully fixed the issue by loading kernel modules."
+#       exit 0
+#     else
+#       echo "Failed to fix the issue. Further investigation is needed."
+#       exit 1
+#     fi
+#   fi
 
-else
-  echo "nvidia-smi is not on the PATH. Attempting to locate and add to PATH."
+# else
+#   echo "nvidia-smi is not on the PATH. Attempting to locate and add to PATH."
 
-  # Locate nvidia-smi
-  NVIDIA_SMI_PATH=$(sudo find / -name "nvidia-smi" 2>/dev/null | head -n 1)
+#   # Locate nvidia-smi
+#   NVIDIA_SMI_PATH=$(sudo find / -name "nvidia-smi" 2>/dev/null | head -n 1)
 
-  if [ -n "$NVIDIA_SMI_PATH" ]; then
-    # Extract the directory containing nvidia-smi
-    NVIDIA_SMI_DIR=$(dirname "$NVIDIA_SMI_PATH")
+#   if [ -n "$NVIDIA_SMI_PATH" ]; then
+#     # Extract the directory containing nvidia-smi
+#     NVIDIA_SMI_DIR=$(dirname "$NVIDIA_SMI_PATH")
 
-    # Add the directory to PATH in a new shell session to avoid affecting the current session
-    echo "export PATH=\$PATH:$NVIDIA_SMI_DIR" >> ~/.bashrc
+#     # Add the directory to PATH in a new shell session to avoid affecting the current session
+#     echo "export PATH=\$PATH:$NVIDIA_SMI_DIR" >> ~/.bashrc
 
-    # Notify user to reload .bashrc or open a new shell session
-    echo "nvidia-smi has been added to the PATH. Please open a new shell or run 'source ~/.bashrc' to update the PATH."
-  else
-    echo "nvidia-smi not found. Please check the NVIDIA driver installation."
-  fi
-fi
+#     # Notify user to reload .bashrc or open a new shell session
+#     echo "nvidia-smi has been added to the PATH. Please open a new shell or run 'source ~/.bashrc' to update the PATH."
+#   else
+#     echo "nvidia-smi not found. Please check the NVIDIA driver installation."
+#   fi
+# fi
 
-echo "The NVIDIA-SMI to PATH function check is complete, if you don't see a message about it before this note, then something is wrong."
-
-
-
-
+# echo "The NVIDIA-SMI to PATH function check is complete, if you don't see a message about it before this note, then something is wrong."
 
 # Update and install git
 sudo apt-get update -y
