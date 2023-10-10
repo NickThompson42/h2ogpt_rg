@@ -234,12 +234,16 @@ def _zip_data(root_dirs=None, zip_file=None, base_dir='./'):
 
 
 def save_generate_output(prompt=None, output=None, base_model=None, save_dir=None, where_from='unknown where from',
+
                          extra_dict={}, error='', extra='', return_dict=False):
+                         extra_dict={}, error='', extra='', which_api='', valid_key=None,
+                         h2ogpt_key='', return_dict=False):
     if not save_dir:
         return
     try:
         return _save_generate_output(prompt=prompt, output=output, base_model=base_model, save_dir=save_dir,
                                      where_from=where_from, extra_dict=extra_dict, error=error, extra=extra,
+                                     which_api=which_api, valid_key=valid_key, h2ogpt_key=h2ogpt_key,
                                      return_dict=return_dict)
     except Exception as e:
         traceback.print_exc()
@@ -248,6 +252,9 @@ def save_generate_output(prompt=None, output=None, base_model=None, save_dir=Non
 
 def _save_generate_output(prompt=None, output=None, base_model=None, save_dir=None, where_from='unknown where from',
                           extra_dict={}, error='', extra='', return_dict=False):
+                          extra_dict={}, error='', extra='', which_api='',
+                          valid_key=None, h2ogpt_key='',
+                          return_dict=False):
     """
     Save conversation to .json, row by row.
     json_file_path is path to final JSON file. If not in ., then will attempt to make directories.
@@ -267,6 +274,9 @@ def _save_generate_output(prompt=None, output=None, base_model=None, save_dir=No
                         where_from=where_from,
                         error=error,
                         extra=extra,
+                        which_api=which_api,
+                        valid_key=valid_key,
+                        h2ogpt_key=h2ogpt_key,
                         )
     dict_to_save.update(extra_dict)
 
@@ -278,6 +288,7 @@ def _save_generate_output(prompt=None, output=None, base_model=None, save_dir=No
     makedirs(save_dir, exist_ok=True)  # already should be made, can't change at this point
     import json
     with filelock.FileLock("save_dir.lock"):
+    with filelock.FileLock("%s.lock" % os.path.basename(save_dir)):
         # lock logging in case have concurrency
         with open(os.path.join(save_dir, "history.json"), "a") as f:
             # just add [ at start, and ] at end, and have proper JSON dataset
@@ -967,6 +978,13 @@ try:
 except (PackageNotFoundError, AssertionError):
     pass
 
+have_chromamigdb = False
+try:
+    assert distribution('chromamigdb') is not None
+    have_chromamigdb = True
+except (PackageNotFoundError, AssertionError):
+    pass
+
 
 def hash_file(file):
     try:
@@ -1195,7 +1213,6 @@ def url_alive(url):
         else:
             return False
 
-
 def dict_to_html(x, small=True):
     df = pd.DataFrame(x.items(), columns=['Key', 'Value'])
     df.index = df.index + 1
@@ -1208,6 +1225,23 @@ def dict_to_html(x, small=True):
 
 
 def text_to_html(x):
+def dict_to_html(x, small=True, api=False):
+    df = pd.DataFrame(x.items(), columns=['Key', 'Value'])
+    df.index = df.index + 1
+    df.index.name = 'index'
+    if api:
+        return tabulate.tabulate(df, headers='keys')
+    else:
+        res = tabulate.tabulate(df, headers='keys', tablefmt='unsafehtml')
+        if small:
+            return "<small>" + res + "</small>"
+        else:
+            return res
+
+
+def text_to_html(x, api=False):
+    if api:
+        return x
     return """
 <style>
       pre {
@@ -1236,10 +1270,16 @@ def lg_to_gr(
         image_loaders_options = ['Caption', 'CaptionBlip2']
     else:
         image_loaders_options = ['Caption']
+    n_gpus, _ = cuda_vis_check(n_gpus)
+
+    image_loaders_options = ['Caption']
+    if n_gpus != 0:
+        image_loaders_options.extend(['CaptionBlip2', 'Pix2Struct'])
     if have_tesseract:
         image_loaders_options.append('OCR')
     if have_doctr:
         image_loaders_options.append('DocTR')
+
     image_loaders_options0 = []
     if have_tesseract and kwargs['enable_ocr']:
         image_loaders_options0.append('OCR')
@@ -1251,6 +1291,7 @@ def lg_to_gr(
             image_loaders_options0.append('CaptionBlip2')
         else:
             image_loaders_options0.append('Caption')
+
     assert len(set(image_loaders_options0).difference(image_loaders_options)) == 0
 
     pdf_loaders_options = ['PyMuPDF', 'Unstructured', 'PyPDF', 'TryHTML']
@@ -1260,6 +1301,14 @@ def lg_to_gr(
     assert len(set(pdf_loaders_options0).difference(pdf_loaders_options)) == 0
     if kwargs['enable_pdf_ocr'] == 'on':
         pdf_loaders_options0.append('OCR')
+    if have_doctr:
+        pdf_loaders_options.append('DocTR')
+
+    pdf_loaders_options0 = ['PyMuPDF']
+    if kwargs['enable_pdf_ocr'] == 'on':
+        pdf_loaders_options0.append('OCR')
+    if have_doctr and kwargs['enable_pdf_doctr']:
+        pdf_loaders_options0.append('DocTR')
 
     url_loaders_options = []
     if only_unstructured_urls:
@@ -1276,6 +1325,10 @@ def lg_to_gr(
             url_loaders_options.append('PlayWright')
     url_loaders_options0 = [url_loaders_options[0]]
     assert len(set(url_loaders_options0).difference(url_loaders_options)) == 0
+    
+    assert set(image_loaders_options0).issubset(image_loaders_options)
+    assert set(pdf_loaders_options0).issubset(pdf_loaders_options)
+    assert set(url_loaders_options0).issubset(url_loaders_options)
 
     return image_loaders_options0, image_loaders_options, \
         pdf_loaders_options0, pdf_loaders_options, \

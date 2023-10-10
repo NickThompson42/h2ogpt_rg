@@ -23,10 +23,28 @@ os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'
 os.environ['BITSANDBYTES_NOWELCOME'] = '1'
 warnings.filterwarnings('ignore', category=UserWarning, message='TypedStorage is deprecated')
 
+# more is not useful typically, don't let these go beyond limits and eat up resources
+max_cores = max(1, os.cpu_count() // 2)
+if os.getenv('NUMEXPR_MAX_THREADS') is None:
+    os.environ['NUMEXPR_MAX_THREADS'] = str(min(8, max_cores))
+if os.getenv('NUMEXPR_NUM_THREADS') is None:
+    os.environ['NUMEXPR_NUM_THREADS'] = str(min(8, max_cores))
+if os.getenv('OMP_NUM_THREADS') is None:
+    os.environ['OMP_NUM_THREADS'] = str(min(8, max_cores))
+if os.getenv('OPENBLAS_NUM_THREADS') is None:
+    os.environ['OPENBLAS_NUM_THREADS'] = str(min(8, max_cores))
+if os.getenv('DUCKDB_NUM_THREADS') is None:
+    os.environ['DUCKDB_NUM_THREADS'] = str(min(4, max_cores))
+if os.getenv('RAYON_RS_NUM_CPUS') is None:
+    os.environ['RAYON_RS_NUM_CPUS'] = str(min(8, max_cores))
+if os.getenv('RAYON_NUM_THREADS') is None:
+    os.environ['RAYON_NUM_THREADS'] = str(min(8, max_cores))
+
 from evaluate_params import eval_func_param_names, no_default_param_names, input_args_list
 from enums import DocumentSubset, LangChainMode, no_lora_str, model_token_mapping, no_model_str, \
     LangChainAction, LangChainAgent, DocumentChoice, LangChainTypes, super_source_prefix, \
     super_source_postfix, t5_type, get_langchain_prompts, gr_to_lg
+    super_source_postfix, t5_type, get_langchain_prompts, gr_to_lg, invalid_key_msg
 from loaders import get_loaders
 from utils import set_seed, clear_torch_cache, NullContext, wrapped_partial, EThread, get_githash, \
     import_matplotlib, get_device, makedirs, get_kwargs, start_faulthandler, get_hf_server, FakeTokenizer, \
@@ -140,6 +158,8 @@ def main(
         input_lines: int = 1,
         gradio_size: str = None,
         show_copy_button: bool = True,
+        large_file_count_mode: bool = False,
+        pre_load_embedding_model: bool = True,
 
         auth: Union[typing.List[typing.Tuple[str, str]], str] = None,
         auth_filename: str = None,
@@ -148,11 +168,18 @@ def main(
         auth_message: str = None,
         guest_name: str = "guest",
 
+        enforce_h2ogpt_api_key: bool = None,
+        h2ogpt_api_keys: Union[list, str] = [],
+        h2ogpt_key: str = None,
+
         max_max_time=None,
         max_max_new_tokens=None,
 
+        visible_models: list = None,
+        visible_visible_models: bool = True,
         visible_submit_buttons: bool = True,
         visible_side_bar: bool = True,
+        visible_doc_track: bool = True,
         visible_chat_tab: bool = True,
         visible_doc_selection_tab: bool = True,
         visible_doc_view_tab: bool = True,
@@ -207,6 +234,7 @@ def main(
         use_openai_model: bool = False,
         hf_embedding_model: str = None,
         migrate_embedding_model: str = False,
+        auto_migrate_db: bool = False,
         cut_distance: float = 1.64,
         answer_with_sources: bool = True,
         append_sources_to_answer: bool = True,
@@ -244,11 +272,14 @@ def main(
         use_unstructured_pdf=False,
         use_pypdf=False,
         enable_pdf_ocr='auto',
+
+        enable_pdf_doctr=False,
         try_pdf_as_html=True,
 
         # images
         enable_ocr=False,
         enable_doctr=False,
+        enable_pix2struct=False,
         enable_captions=True,
 
         pre_load_caption_model: bool = False,
@@ -343,6 +374,7 @@ def main(
            Maximum value is 4 due to non-dynamic gradio rendering elements
     :param fail_if_cannot_connect: if doing model locking (e.g. with many models), fail if True.  Otherwise ignore.
            Useful when many endpoints and want to just see what works, but still have to wait for timeout.
+
     :param temperature: generation temperature
     :param top_p: generation top_p
     :param top_k: generation top_k
@@ -411,6 +443,8 @@ def main(
     :param gradio_size: Overall size of text and spaces: "xsmall", "small", "medium", "large".
            Small useful for many chatbots in model_lock mode
     :param show_copy_button: Whether to show copy button for chatbots
+    :param large_file_count_mode: Whether to force manual update to UI of drop-downs, good idea if millions of chunks or documents
+    :param pre_load_embedding_model: Whether to preload embedding model for shared use across DBs and users (multi-thread safe only)
 
     :param auth: gradio auth for launcher in form [(user1, pass1), (user2, pass2), ...]
                  e.g. --auth=[('jon','password')] with no spaces
@@ -427,11 +461,24 @@ def main(
     :param auth_message: Message to show if having users login, fixed if passed, else dynamic internally
     :param guest_name: guess name if using auth and have open access.
            If '', then no guest allowed even if open access, then all databases for each user always persisted
+    :param enforce_h2ogpt_api_key: Whether to enforce h2oGPT token usage for API
+    :param h2ogpt_api_keys: list of tokens allowed for API access or file accessed on demand for json of list of keys
+    :param h2ogpt_key: Placeholder for default access key, not usually used
 
     :param max_max_time: Maximum max_time for gradio slider
     :param max_max_new_tokens: Maximum max_new_tokens for gradio slider
+
+    :param visible_models: Which models in model_lock list to show by default
+           Takes integers of position in model_lock (model_states) list or strings of base_model names
+           Ignored if model_lock not used
+           For nochat API, this is single item within a list for model by name or by index in model_lock
+                                If None, then just use first model in model_lock list
+                                If model_lock not set, use model selected by CLI --base_model etc.
+
+    :param visible_visible_models: Whether visible models drop-down is visible in UI
     :param visible_submit_buttons: whether submit buttons are visible when UI first comes up
     :param visible_side_bar: whether left side bar is visible when UI first comes up
+    :param visible_doc_track: whether left side bar's document tracking is visible when UI first comes up
     :param visible_chat_tab: "" for chat tab
     :param visible_doc_selection_tab:  "" for doc selection tab
     :param visible_doc_view_tab: "" for doc view tab
@@ -444,6 +491,8 @@ def main(
     :param visible_hosts_tab: "" for hosts tab
     :param chat_tables: Just show Chat as block without tab (useful if want only chat view)
     :param visible_h2ogpt_header: Whether github stars, URL, logo, and QR code are visible
+    :param max_raw_chunks: Maximum number of chunks to show in UI when asking for raw DB text from documents/collection
+
     :param sanitize_user_prompt: whether to remove profanity from user input (slows down input processing)
       Requires optional packages:
       pip install alt-profanity-check==1.2.2 better-profanity==0.7.0
@@ -512,6 +561,7 @@ def main(
            used to migrate all embeddings to a new one, but will take time to re-embed.
            Default (False) is to use the prior embedding for existing databases, and only use hf_embedding_model for new databases
            If had old database without embedding saved, then hf_embedding_model is also used.
+    :param auto_migrate_db: whether to automatically migrate any chroma<0.4 database from duckdb -> sqlite version
     :param cut_distance: Distance to cut off references with larger distances when showing references.
            1.64 is good to avoid dropping references for all-MiniLM-L6-v2, but instructor-large will always show excessive references.
            For all-MiniLM-L6-v2, a value of 1.5 can push out even more references, or a large value of 100 can avoid any loss of references.
@@ -567,6 +617,12 @@ def main(
 
     :param enable_ocr: Whether to support OCR on images
     :param enable_doctr: Whether to support doctr on images
+    :param enable_pdf_doctr: Whether to support doctr on pdfs
+    :param try_pdf_as_html: Try "PDF" as if HTML file, in case web link has .pdf extension but really is just HTML
+
+    :param enable_ocr: Whether to support OCR on images
+    :param enable_doctr: Whether to support doctr on images (using OCR better than enable_ocr=True)
+    :param enable_pix2struct: Whether to support pix2struct on images for captions
     :param enable_captions: Whether to support captions using BLIP for image files as documents,
            then preloads that model if pre_load_caption_model=True
 
@@ -624,8 +680,6 @@ def main(
 
     if model_lock:
         assert gradio, "model_lock only supported for gradio=True"
-        if len(model_lock) > 1:
-            assert chat, "model_lock only works for multiple models for chat=True"
         assert not cli, "model_lock only supported for cli=False"
         assert not (not cli and not gradio), "model_lock only supported for eval (cli=gradio=False)"
         assert not base_model, "Don't specify model_lock and base_model"
@@ -641,6 +695,13 @@ def main(
     is_public = is_hf or is_gpth2oai  # multi-user case with fixed model and disclaimer
     if is_public:
         visible_tos_tab = visible_hosts_tab = True
+        if enforce_h2ogpt_api_key is None:
+            enforce_h2ogpt_api_key = True
+    else:
+        if enforce_h2ogpt_api_key is None:
+            enforce_h2ogpt_api_key = False
+    if isinstance(h2ogpt_api_keys, str) and not os.path.isfile(h2ogpt_api_keys):
+        h2ogpt_api_keys = ast.literal_eval(h2ogpt_api_keys)
     if memory_restriction_level is None:
         memory_restriction_level = 2 if is_hf else 0  # 2 assumes run on 24GB consumer GPU
     else:
@@ -718,7 +779,10 @@ def main(
         if user_path:
             langchain_mode_paths['UserData'] = user_path
 
+
     assert langchain_action in langchain_actions, "Invalid langchain_action %s not in %s" % (langchain_action, langchain_actions)
+    assert langchain_action in langchain_actions, "Invalid langchain_action %s not in %s" % (
+        langchain_action, langchain_actions)
     assert len(
         set(langchain_agents).difference(langchain_agents_list)) == 0, "Invalid langchain_agents %s" % langchain_agents
 
@@ -732,12 +796,14 @@ def main(
             # infer even if don't pass which langchain_mode, just langchain_modes.
             langchain_mode = langchain_modes[0]
         if allow_upload_to_user_data and not is_public and langchain_mode_paths['UserData']:
-            print("Auto set langchain_mode=%s.  Could use UserData instead." % langchain_mode, flush=True)
+            if verbose:
+                print("Auto set langchain_mode=%s.  Could use UserData instead." % langchain_mode, flush=True)
         elif allow_upload_to_my_data:
-            print("Auto set langchain_mode=%s.  Could use MyData instead."
-                  "  To allow UserData to pull files from disk,"
-                  " set user_path or langchain_mode_paths, and ensure allow_upload_to_user_data=True" % langchain_mode,
-                  flush=True)
+            if verbose:
+                print("Auto set langchain_mode=%s.  Could use MyData instead."
+                      "  To allow UserData to pull files from disk,"
+                      " set user_path or langchain_mode_paths, and ensure allow_upload_to_user_data=True" % langchain_mode,
+                      flush=True)
         else:
             raise RuntimeError("Please pass --langchain_mode=<chosen mode> out of %s" % langchain_modes)
     if not have_langchain and langchain_mode not in [None, LangChainMode.DISABLED.value, LangChainMode.LLM.value]:
@@ -890,6 +956,7 @@ def main(
     # defaults
     caption_loader = None
     doctr_loader = None
+    pix2struct_loader = None
 
     image_loaders_options0, image_loaders_options, \
         pdf_loaders_options0, pdf_loaders_options, \
@@ -962,7 +1029,9 @@ def main(
                                     langchain_mode1, langchain_mode_paths, langchain_mode_types,
                                     hf_embedding_model,
                                     migrate_embedding_model,
-                                    kwargs_make_db=locals())
+                                    auto_migrate_db,
+                                    kwargs_make_db=locals(),
+                                    verbose=verbose)
             finally:
                 # in case updated embeddings or created new embeddings
                 clear_torch_cache()
@@ -1106,6 +1175,15 @@ def main(
                 model_state0 = model_state_trial.copy()
             assert len(model_state_none) == len(model_state0)
 
+        if isinstance(visible_models, str):
+            visible_models = ast.literal_eval(visible_models)
+        assert isinstance(visible_models, (type(None), list))
+        all_models = [x.get('base_model', xi) for xi, x in enumerate(model_states)]
+        visible_models_state0 = [x.get('base_model', xi) for xi, x in enumerate(model_states) if
+                                 visible_models is None or
+                                 x.get('base_model', xi) in visible_models or
+                                 xi in visible_models]
+
         # update to be consistent with what is passed from CLI and model chose
         # do after go over all models if multi-model, so don't contaminate
         # This is just so UI shows reasonable correct value, not 2048 dummy value
@@ -1129,6 +1207,12 @@ def main(
                 caption_loader = 'gpu' if caption_gpu else 'cpu'
         else:
             caption_loader = False
+
+        if pre_load_embedding_model and langchain_mode != 'Disabled' and not use_openai_embedding:
+            from src.gpt_langchain import get_embedding
+            hf_embedding_model = dict(name=hf_embedding_model,
+                                      model=get_embedding(use_openai_embedding, hf_embedding_model=hf_embedding_model,
+                                                          preload=True))
 
         # assume gradio needs everything
         go_gradio(**locals())
@@ -1863,6 +1947,11 @@ def get_score_model(score_model: str = None,
     return smodel, stokenizer, sdevice
 
 
+def evaluate_fake(*args, **kwargs):
+    yield dict(response=invalid_key_msg, sources='')
+    return
+
+
 def evaluate(
         model_state,
         my_db_state,
@@ -1909,10 +1998,14 @@ def evaluate(
         url_loaders,
         jq_schema,
 
+        visible_models,  # not used but just here for code to be simpler for knowing what wrapper to evaluate needs
+        h2ogpt_key,
+
         # END NOTE: Examples must have same order of parameters
         captions_model=None,
         caption_loader=None,
         doctr_loader=None,
+        pix2struct_loader=None,
         async_output=None,
         num_async=None,
         src_lang=None,
@@ -1937,6 +2030,7 @@ def evaluate(
         use_openai_model=None,
         hf_embedding_model=None,
         migrate_embedding_model=None,
+        auto_migrate_db=None,
         cut_distance=None,
         db_type=None,
         n_jobs=None,
@@ -1972,6 +2066,7 @@ def evaluate(
     assert use_openai_model is not None
     assert hf_embedding_model is not None
     assert migrate_embedding_model is not None
+    assert auto_migrate_db is not None
     assert db_type is not None
     assert top_k_docs is not None and isinstance(top_k_docs, int)
     assert chunk is not None and isinstance(chunk, bool)
@@ -2104,6 +2199,15 @@ def evaluate(
     iinput, num_prompt_tokens3 = H2OTextGenerationPipeline.limit_prompt(iinput, tokenizer)
     num_prompt_tokens = (num_prompt_tokens1 or 0) + (num_prompt_tokens2 or 0) + (num_prompt_tokens3 or 0)
 
+    if inference_server and inference_server.startswith('http'):
+        # assume TGI/Gradio setup to consume tokens and have long output too, even if exceeds model capacity.
+        pass
+    else:
+        # limit so max_new_tokens = prompt + new < max
+        # otherwise model can fail etc. e.g. for distilgpt2 asking for 1024 tokens is enough to fail if prompt=1 token
+        max_max_tokens = tokenizer.model_max_length if hasattr(tokenizer, 'model_max_length') else 2048
+        max_new_tokens = min(max_new_tokens, max_max_tokens - num_prompt_tokens)
+
     # get prompt
     prompter = Prompter(prompt_type, prompt_dict, debug=debug, chat=chat, stream_output=stream_output,
                         use_system_prompt=use_system_prompt)
@@ -2112,7 +2216,10 @@ def evaluate(
 
     # THIRD PLACE where LangChain referenced, but imports only occur if enabled and have db to use
     assert langchain_mode in langchain_modes, "Invalid langchain_mode %s not in %s" % (langchain_mode, langchain_modes)
+
     assert langchain_action in langchain_actions, "Invalid langchain_action %s not in %s" % (langchain_action, langchain_actions)
+    assert langchain_action in langchain_actions, "Invalid langchain_action %s not in %s" % (
+        langchain_action, langchain_actions)
     assert len(
         set(langchain_agents).difference(langchain_agents_list)) == 0, "Invalid langchain_agents %s" % langchain_agents
 
@@ -2127,6 +2234,10 @@ def evaluate(
                     migrate_embedding_model=migrate_embedding_model,
                     for_sources_list=True,
                     verbose=verbose,
+                    auto_migrate_db=auto_migrate_db,
+                    for_sources_list=True,
+                    verbose=verbose,
+                    n_jobs=n_jobs,
                     )
 
     t_generate = time.time()
@@ -2165,6 +2276,8 @@ def evaluate(
                                  caption_loader=caption_loader,
                                  jq_schema=jq_schema,
                                  doctr_loader=doctr_loader
+                                 doctr_loader=doctr_loader,
+                                 pix2struct_loader=pix2struct_loader,
                                  ))
         for r in run_qa_db(
                 inference_server=inference_server,
@@ -2188,6 +2301,7 @@ def evaluate(
                 use_openai_model=use_openai_model,
                 hf_embedding_model=hf_embedding_model,
                 migrate_embedding_model=migrate_embedding_model,
+                auto_migrate_db=auto_migrate_db,
                 first_para=first_para,
                 text_limit=text_limit,
                 show_accordions=show_accordions,
@@ -2216,6 +2330,7 @@ def evaluate(
                 prompt_query=prompt_query,
                 pre_prompt_summary=pre_prompt_summary,
                 prompt_summary=prompt_summary,
+                h2ogpt_key=h2ogpt_key,
 
                 **gen_hyper_langchain,
 
@@ -2433,6 +2548,17 @@ def evaluate(
                                      chunk_size=chunk_size,
                                      document_subset=DocumentSubset.Relevant.name,
                                      document_choice=[DocumentChoice.ALL.value],
+                                     pre_prompt_query=pre_prompt_query,
+                                     prompt_query=prompt_query,
+                                     pre_prompt_summary=pre_prompt_summary,
+                                     prompt_summary=prompt_summary,
+                                     system_prompt=system_prompt,
+                                     image_loaders=image_loaders,
+                                     pdf_loaders=pdf_loaders,
+                                     url_loaders=url_loaders,
+                                     jq_schema=jq_schema,
+                                     visible_models=visible_models,
+                                     h2ogpt_key=h2ogpt_key,
                                      )
                 api_name = '/submit_nochat_api'  # NOTE: like submit_nochat but stable API for string dict passing
                 response = ''
@@ -3083,6 +3209,8 @@ y = np.random.randint(0, 1, 100)
                     pdf_loaders,
                     url_loaders,
                     jq_schema,
+                    None,
+                    None,
                     ]
         # adjust examples if non-chat mode
         if not chat:
