@@ -13,6 +13,9 @@ test_data.json
 todo.txt
 .neptune/
 *.bin
+*.bak
+*.lock
+*.deb
 db_dir_UserData
 temp_path_do_doc1
 offline_folder
