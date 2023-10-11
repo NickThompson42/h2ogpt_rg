@@ -12,6 +12,9 @@ evaluate.py
 test_data.json
 todo.txt
 .neptune/
+logs/*.txt
+*.csv
+*.pdf
 *.bin
 *.bak
 *.lock
