@@ -3,13 +3,13 @@
 """
 PDF Cleaner Script
 
-Author: Your Name
+Author: Nick Thompson
 Last Updated: Date
 """
 
 import os
 import argparse
-import fitz
+import fitz # PyMuPDF
 import pandas as pd
 from datetime import datetime
 import unittest
@@ -23,10 +23,12 @@ class Report:
     """A class to handle logging of PDF processing results."""
     
     def __init__(self):
+        # Initialize a DataFrame to store log details
         self.data = pd.DataFrame(columns=['File Path', 'Total Pages', 'Cleaned Pages', 'Dropped Pages', 'Size Before (bytes)', 'Size After (bytes)', 'Status', 'Error'])
 
     def log(self, input_path, total_pages, cleaned_pages, dropped_pages, before_size, after_size, status, error=None):
         """Log processing results for a single PDF."""
+        # create a new row for logging and append it to the DataFrame
         new_row = pd.DataFrame([{
             'File Path': input_path,
             'Total Pages': total_pages,
@@ -41,32 +43,38 @@ class Report:
 
     def save(self, file_path):
         """Save the report to a CSV file."""
+        # save the DataFrame to a csv file
         self.data.to_csv(file_path, index=False)
 
 class PDFCleaner:
     """A class to process and clean PDFs."""
     
     def __init__(self):
+        # initialize the report object
         self.report = Report()
 
     def remove_headers(self, input_path):
         """Remove headers from each page of a PDF and handle corrupted pages."""
-        failed_pages = []
+        failed_pages = [] # list to keep track of failed pages
         total_pages = cleaned_pages = dropped_pages = 0
-        before_size = os.path.getsize(input_path)
+        before_size = os.path.getsize(input_path) # get the initial file size
         try:
+            # open the pdf document using PyMuPDF
             pdf_document = fitz.open(input_path)
             total_pages = len(pdf_document)
             for page_num, page in enumerate(pdf_document):
                 try:
+                    # define the rectangle where the header usuyally appears (you'll need to set the dimensions)
                     # TODO: Add checks for corrupted pages or pages with HTML flags.
                     header_rect = fitz.Rect(0, 0, page.rect.width, 50)
+                    # Add a white rectangle to cover the header
                     page.add_redact_annot(header_rect, fill=(1, 1, 1))
+                    # Apply the redaction
                     page.apply_redactions()
-                    cleaned_pages += 1
+                    cleaned_pages += 1 # Increment the cleaned_pages counter
                 except Exception as e:
-                    failed_pages.append(page_num)
-                    dropped_pages += 1
+                    failed_pages.append(page_num) # Add the failed page number to the list
+                    dropped_pages += 1 # Increment the dropped_pages counter
 
             # Drop the failed pages
             for page_num in reversed(failed_pages):
@@ -75,23 +83,29 @@ class PDFCleaner:
             # Save the cleaned PDF to a temporary path and then replace the original
             temp_save_path = input_path.replace('.pdf', '_temp.pdf')
             pdf_document.save(temp_save_path)
-            pdf_document.close()
+            pdf_document.close() # Close the PDF document
 
+            # Replace the original file with the cleaned one
             os.remove(input_path)  # Delete the original file
             os.rename(temp_save_path, input_path)  # Rename the temporary file to the original filename
 
-            after_size = os.path.getsize(input_path)
+            # Log the details
+            after_size = os.path.getsize(input_path) # Get the final file size
             self.report.log(input_path, total_pages, cleaned_pages, dropped_pages, before_size, after_size, 'Success')
         except Exception as e:
+            # Log any exceptions that occurred during the processing
             self.report.log(input_path, total_pages, cleaned_pages, dropped_pages, before_size, 0, 'Failure', str(e))
 
     def process_directory(self, dir_path, output_dir):
+        """Process all PDFs in a given directory."""
+        # Create a list of all pdf files in the directory
         file_paths = []
         for root, _, files in os.walk(dir_path):
             for name in files:
                 if name.lower().endswith('.pdf'):
                     file_paths.append(os.path.join(root, name))
         
+        # process each pdf file
         for full_path in tqdm(file_paths, desc='Processing PDFs', unit='file'):
             cleaned_path = self.remove_headers(full_path)
             shutil.move(cleaned_path, os.path.join(output_dir, os.path.basename(cleaned_path)))
