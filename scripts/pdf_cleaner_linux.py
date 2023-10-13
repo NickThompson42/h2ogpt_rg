@@ -141,30 +141,47 @@ def generate_summary_log(csv_path, log_path):
         log_file.write('\n'.join(summary_lines))
 
 
+# Check if the script is being run as the main program
 if __name__ == "__main__":
+    
+    # Initialize argument parser and add command-line arguments
     parser = argparse.ArgumentParser(description='Process PDF files to remove headers.')
     parser.add_argument('dirty_directory', help='The directory containing unprocessed PDFs to clean')
     parser.add_argument('clean_directory', help='The directory to save the cleaned PDFs')
+    
+    # Parse the command-line arguments and store them in variables
     args = parser.parse_args()
-
     dirty_dir = args.dirty_directory
     clean_dir = args.clean_directory
-
-    # Dedicated path for logs
+    
+    # Set up a dedicated directory for storing logs
+    # The logs will be stored in the user's home directory under a folder called 'h2ogpt_rg/logs'
     logs_dir = os.path.join(os.environ['HOME'], 'h2ogpt_rg', 'logs')
+    
+    # Create the logs directory if it doesn't exist
     if not os.path.exists(logs_dir):
-        os.makedirs(logs_dir)  # Ensure the logs directory exists
-
+        os.makedirs(logs_dir)
+    
+    # Generate a timestamp for the log file name
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    
+    # Create log and summary file names based on the timestamp
     log_name = f"{timestamp}_log-pdf-processing-report.csv"
     report_path = os.path.join(logs_dir, log_name)
     summary_log_path = report_path.replace('.csv', '_summary.txt')
-
+    
+    # Initialize PDFCleaner class and process the PDFs in the given directory
     pdf_cleaner = PDFCleaner()
     pdf_cleaner.process_directory(dirty_dir)
+    
+    # Save the detailed report and generate the summary log
     pdf_cleaner.report.save(report_path)
     generate_summary_log(report_path, summary_log_path)
     
+    # Print the location of the saved reports
     print(f"PDF processing completed. Report saved at {report_path}")
     print(f"Summary log saved at {summary_log_path}")
+
+# example to run from command line:
+# python pdf_cleaner_linux.py /home/user/unclean_pdfs /home/user/clean_pdfs
 
