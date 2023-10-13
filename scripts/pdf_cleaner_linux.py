@@ -96,6 +96,20 @@ class PDFCleaner:
             # Log any exceptions that occurred during the processing
             self.report.log(input_path, total_pages, cleaned_pages, dropped_pages, before_size, 0, 'Failure', str(e))
 
+    # def process_directory(self, dir_path, output_dir):
+    #     """Process all PDFs in a given directory."""
+    #     # Create a list of all pdf files in the directory
+    #     file_paths = []
+    #     for root, _, files in os.walk(dir_path):
+    #         for name in files:
+    #             if name.lower().endswith('.pdf'):
+    #                 file_paths.append(os.path.join(root, name))
+        
+    #     # process each pdf file
+    #     for full_path in tqdm(file_paths, desc='Processing PDFs', unit='file'):
+    #         cleaned_path = self.remove_headers(full_path)
+    #         shutil.move(cleaned_path, os.path.join(output_dir, os.path.basename(cleaned_path)))
+
     def process_directory(self, dir_path, output_dir):
         """Process all PDFs in a given directory."""
         # Create a list of all pdf files in the directory
@@ -107,8 +121,8 @@ class PDFCleaner:
         
         # process each pdf file
         for full_path in tqdm(file_paths, desc='Processing PDFs', unit='file'):
-            cleaned_path = self.remove_headers(full_path)
-            shutil.move(cleaned_path, os.path.join(output_dir, os.path.basename(cleaned_path)))
+            self.remove_headers(full_path)  # No need to assign to cleaned_path, it's in-place
+            shutil.move(full_path, os.path.join(output_dir, os.path.basename(full_path)))
 
 
 def generate_summary_log(csv_path, log_path):
@@ -172,7 +186,7 @@ if __name__ == "__main__":
     
     # Initialize PDFCleaner class and process the PDFs in the given directory
     pdf_cleaner = PDFCleaner()
-    pdf_cleaner.process_directory(dirty_dir)
+    pdf_cleaner.process_directory(dirty_dir, clean_dir)
     
     # Save the detailed report and generate the summary log
     pdf_cleaner.report.save(report_path)
