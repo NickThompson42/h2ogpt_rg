@@ -198,4 +198,8 @@ if __name__ == "__main__":
 
 # example to run from command line:
 # python pdf_cleaner_linux.py /home/user/unclean_pdfs /home/user/clean_pdfs
+# i have written a .bashrc_function that will call this in the unix command
+# clean_pdfs ./training_data_dirty/subset ./training_data_clean
+
+
 
