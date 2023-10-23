@@ -2,8 +2,10 @@ import ast
 import contextlib
 import functools
 import gc
+import getpass
 import hashlib
 import inspect
+import json
 import os
 import pathlib
 import pickle
@@ -19,6 +21,8 @@ import zipfile
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 from typing import Tuple, Callable, Dict
+from queue import Queue, Empty
+from concurrent.futures import ThreadPoolExecutor
 
 import filelock
 import fire
@@ -234,8 +238,6 @@ def _zip_data(root_dirs=None, zip_file=None, base_dir='./'):
 
 
 def save_generate_output(prompt=None, output=None, base_model=None, save_dir=None, where_from='unknown where from',
-
-                         extra_dict={}, error='', extra='', return_dict=False):
                          extra_dict={}, error='', extra='', which_api='', valid_key=None,
                          h2ogpt_key='', return_dict=False):
     if not save_dir:
@@ -251,7 +253,6 @@ def save_generate_output(prompt=None, output=None, base_model=None, save_dir=Non
 
 
 def _save_generate_output(prompt=None, output=None, base_model=None, save_dir=None, where_from='unknown where from',
-                          extra_dict={}, error='', extra='', return_dict=False):
                           extra_dict={}, error='', extra='', which_api='',
                           valid_key=None, h2ogpt_key='',
                           return_dict=False):
@@ -287,7 +288,6 @@ def _save_generate_output(prompt=None, output=None, base_model=None, save_dir=No
         raise RuntimeError("save_dir already exists and is not a directory!")
     makedirs(save_dir, exist_ok=True)  # already should be made, can't change at this point
     import json
-    with filelock.FileLock("save_dir.lock"):
     with filelock.FileLock("%s.lock" % os.path.basename(save_dir)):
         # lock logging in case have concurrency
         with open(os.path.join(save_dir, "history.json"), "a") as f:
@@ -653,9 +653,12 @@ def get_url(x, from_str=False, short_name=False, font_size=2):
     if source.startswith('http://') or source.startswith('https://'):
         return """<font size="%s"><a href="%s" target="_blank"  rel="noopener noreferrer">%s</a></font>""" % (
             font_size, source, source_name)
-    else:
+    elif '<a href=' not in source:
         return """<font size="%s"><a href="file/%s" target="_blank"  rel="noopener noreferrer">%s</a></font>""" % (
             font_size, source, source_name)
+    else:
+        # already filled
+        return source
 
 
 def get_short_name(name, maxl=50):
@@ -901,13 +904,18 @@ class _ForkDataContext(threading.local):
 forkdatacontext = _ForkDataContext()
 
 
+# Add user info
+username = getpass.getuser()
+current_working_directory = os.getcwd()
+operating_system = platform.system()
+
+
 def _traced_func(func, *args, **kwargs):
     func, args, kwargs = forkdatacontext.get_args_kwargs_for_traced_func(func, args, kwargs)
     return func(*args, **kwargs)
 
 
 def call_subprocess_onetask(func, args=None, kwargs=None):
-    import platform
     if platform.system() in ['Darwin', 'Windows']:
         return func(*args, **kwargs)
     if isinstance(args, list):
@@ -986,6 +994,14 @@ except (PackageNotFoundError, AssertionError):
     pass
 
 
+have_serpapi = False
+try:
+    assert distribution('google-search-results') is not None
+    have_serpapi = True
+except (PackageNotFoundError, AssertionError):
+    pass
+
+
 def hash_file(file):
     try:
         import hashlib
@@ -1040,9 +1056,14 @@ class FakeTokenizer:
     2) For when model doesn't directly expose tokenizer but need to count tokens
     """
 
-    def __init__(self, model_max_length=2048, encoding_name="cl100k_base"):
-        # dont' push limit, since if using fake tokenizer, only estimate, and seen underestimates by order 250
-        self.model_max_length = model_max_length - 250
+    def __init__(self, model_max_length=2048, encoding_name="cl100k_base", is_openai=False):
+        if model_max_length is None:
+            model_max_length = 2048
+        self.is_openai = is_openai
+        self.model_max_length = model_max_length
+        if not self.is_openai:
+            # dont' push limit, since if using fake tokenizer, only estimate, and seen underestimates by order 250
+            self.model_max_length -= 250
         self.encoding_name = encoding_name
         # The first time this runs, it will require an internet connection to download. Later runs won't need an internet connection.
         import tiktoken
@@ -1146,9 +1167,13 @@ def set_openai(inference_server):
         import openai_vllm
         openai_vllm.api_key = "EMPTY"
         inf_type = inference_server.split(':')[0]
-        ip_vllm = inference_server.split(':')[1]
-        port_vllm = inference_server.split(':')[2]
-        openai_vllm.api_base = f"http://{ip_vllm}:{port_vllm}/v1"
+        ip_port_vllm = ':'.join(inference_server.split(':')[1:])
+        if ip_port_vllm.startswith('https://') or ip_port_vllm.startswith('http://'):
+            openai_vllm.api_base = ip_port_vllm
+        else:
+            ip_vllm = inference_server.split(':')[1]
+            port_vllm = inference_server.split(':')[2]
+            openai_vllm.api_base = f"http://{ip_vllm}:{port_vllm}/v1"
         return openai_vllm, inf_type, None, None, None
     else:
         import openai
@@ -1163,8 +1188,12 @@ def set_openai(inference_server):
             deployment_type = inference_server.split(':')[1]
         if len(inference_server.split(':')) >= 3:
             base_url = inference_server.split(':')[2]
+            base_url = 'https://' + base_url
         if len(inference_server.split(':')) >= 4:
             api_version = inference_server.split(':')[3]
+        if 'openai_azure_chat' in inference_server and api_version is None:
+            # for function tools support
+            api_version = "2023-09-01-preview"
 
         if deployment_type == 'None':
             deployment_type = None
@@ -1213,18 +1242,7 @@ def url_alive(url):
         else:
             return False
 
-def dict_to_html(x, small=True):
-    df = pd.DataFrame(x.items(), columns=['Key', 'Value'])
-    df.index = df.index + 1
-    df.index.name = 'index'
-    res = tabulate.tabulate(df, headers='keys', tablefmt='unsafehtml')
-    if small:
-        return "<small>" + res + "</small>"
-    else:
-        return res
 
-
-def text_to_html(x):
 def dict_to_html(x, small=True, api=False):
     df = pd.DataFrame(x.items(), columns=['Key', 'Value'])
     df.index = df.index + 1
@@ -1265,11 +1283,6 @@ def lg_to_gr(
     # translate:
     import torch
     n_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
-    n_gpus, gpu_ids = cuda_vis_check(n_gpus)
-    if n_gpus != 0:
-        image_loaders_options = ['Caption', 'CaptionBlip2']
-    else:
-        image_loaders_options = ['Caption']
     n_gpus, _ = cuda_vis_check(n_gpus)
 
     image_loaders_options = ['Caption']
@@ -1292,22 +1305,18 @@ def lg_to_gr(
         else:
             image_loaders_options0.append('Caption')
 
-    assert len(set(image_loaders_options0).difference(image_loaders_options)) == 0
-
     pdf_loaders_options = ['PyMuPDF', 'Unstructured', 'PyPDF', 'TryHTML']
     if have_tesseract:
         pdf_loaders_options.append('OCR')
-    pdf_loaders_options0 = ['PyMuPDF']
-    assert len(set(pdf_loaders_options0).difference(pdf_loaders_options)) == 0
-    if kwargs['enable_pdf_ocr'] == 'on':
-        pdf_loaders_options0.append('OCR')
     if have_doctr:
         pdf_loaders_options.append('DocTR')
 
-    pdf_loaders_options0 = ['PyMuPDF']
-    if kwargs['enable_pdf_ocr'] == 'on':
+    pdf_loaders_options0 = []
+    if kwargs['use_pymupdf'] in [True, 'auto', 'on']:
+        pdf_loaders_options0.append('PyMuPDF')
+    if kwargs['enable_pdf_ocr'] in [True, 'on']:
         pdf_loaders_options0.append('OCR')
-    if have_doctr and kwargs['enable_pdf_doctr']:
+    if have_doctr and kwargs['enable_pdf_doctr'] in [True, 'on']:
         pdf_loaders_options0.append('DocTR')
 
     url_loaders_options = []
@@ -1324,7 +1333,6 @@ def lg_to_gr(
         if have_playwright:
             url_loaders_options.append('PlayWright')
     url_loaders_options0 = [url_loaders_options[0]]
-    assert len(set(url_loaders_options0).difference(url_loaders_options)) == 0
     
     assert set(image_loaders_options0).issubset(image_loaders_options)
     assert set(pdf_loaders_options0).issubset(pdf_loaders_options)
@@ -1333,3 +1341,259 @@ def lg_to_gr(
     return image_loaders_options0, image_loaders_options, \
         pdf_loaders_options0, pdf_loaders_options, \
         url_loaders_options0, url_loaders_options
+
+
+def fix_json(s):
+
+    # Attempt to parse the string as-is.
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        pass
+
+    # Initialize variables.
+    new_s = ""
+    stack = []
+    is_inside_string = False
+    escaped = False
+
+    # Process each character in the string one at a time.
+    for char in s:
+        if is_inside_string:
+            if char == '"' and not escaped:
+                is_inside_string = False
+            elif char == '\n' and not escaped:
+                char = '\\n' # Replace the newline character with the escape sequence.
+            elif char == '\\':
+                escaped = not escaped
+            else:
+                escaped = False
+        else:
+            if char == '"':
+                is_inside_string = True
+                escaped = False
+            elif char == '{':
+                stack.append('}')
+            elif char == '[':
+                stack.append(']')
+            elif char == '}' or char == ']':
+                if stack and stack[-1] == char:
+                    stack.pop()
+                else:
+                    # Mismatched closing character; the input is malformed.
+                    return None
+
+        # Append the processed character to the new string.
+        new_s += char
+
+    # If we're still inside a string at the end of processing, we need to close the string.
+    if is_inside_string:
+        new_s += '"'
+
+    # Close any remaining open structures in the reverse order that they were opened.
+    for closing_char in reversed(stack):
+        new_s += closing_char
+
+    # Attempt to parse the modified string as JSON.
+    try:
+        return json.loads(new_s)
+    except json.JSONDecodeError:
+        # If we still can't parse the string as JSON, return None to indicate failure.
+        return None
+
+
+def wrap_in_try_except(code):
+    # Add import traceback
+    code = "import traceback\n" + code
+
+    # Parse the input code into an AST
+    parsed_code = ast.parse(code)
+
+    # Wrap the entire code's AST in a single try-except block
+    try_except = ast.Try(
+        body=parsed_code.body,
+        handlers=[
+            ast.ExceptHandler(
+                type=ast.Name(id="Exception", ctx=ast.Load()),
+                name=None,
+                body=[
+                    ast.Expr(
+                        value=ast.Call(
+                            func=ast.Attribute(value=ast.Name(id="traceback", ctx=ast.Load()), attr="print_exc", ctx=ast.Load()),
+                            args=[],
+                            keywords=[]
+                        )
+                    ),
+                ]
+            )
+        ],
+        orelse=[],
+        finalbody=[]
+    )
+
+    # Assign the try-except block as the new body
+    parsed_code.body = [try_except]
+
+    # Convert the modified AST back to source code
+    return ast.unparse(parsed_code)
+
+
+def enqueue_output(file, queue):
+    for line in iter(file.readline, ''):
+        queue.put(line)
+    file.close()
+
+
+def read_popen_pipes(p):
+
+    with ThreadPoolExecutor(2) as pool:
+        q_stdout, q_stderr = Queue(), Queue()
+
+        pool.submit(enqueue_output, p.stdout, q_stdout)
+        pool.submit(enqueue_output, p.stderr, q_stderr)
+
+        while True:
+
+            if p.poll() is not None and q_stdout.empty() and q_stderr.empty():
+                break
+
+            out_line = err_line = ''
+
+            try:
+                out_line = q_stdout.get_nowait()
+            except Empty:
+                pass
+            try:
+                err_line = q_stderr.get_nowait()
+            except Empty:
+                pass
+
+            yield out_line, err_line
+
+
+def start_process(cmd):
+    start_cmd = sys.executable + " -i -q -u"
+    print_cmd = 'print("{}")'
+    cmd = [start_cmd] + [cmd]
+
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+    for c in iter(lambda: process.stdout.read(1), b''):
+        sys.stdout.write(c)
+
+
+def str_to_list(x, allow_none=False):
+    if isinstance(x, str):
+        if len(x.strip()) > 0:
+            if x.strip().startswith('['):
+                x = ast.literal_eval(x.strip())
+            else:
+                raise ValueError("Invalid str_to_list for %s" % x)
+        else:
+            x = []
+    elif x is None and not allow_none:
+        x = []
+    if allow_none:
+        assert isinstance(x, (type(None), list))
+    else:
+        assert isinstance(x, list)
+    return x
+
+
+def str_to_dict(x):
+    if isinstance(x, str):
+        if len(x.strip()) > 0:
+            if x.strip().startswith('{'):
+                x = ast.literal_eval(x.strip())
+            else:
+                raise ValueError("Invalid str_to_dict for %s" % x)
+        else:
+            x = {}
+    elif x is None:
+        x = {}
+    assert isinstance(x, dict)
+    return x
+
+
+def get_token_count(x, tokenizer, token_count_fun=None):
+    # NOTE: Somewhat duplicates H2OTextGenerationPipeline.get_token_count()
+    # handle ambiguity in if get dict or list
+    if tokenizer:
+        if hasattr(tokenizer, 'encode'):
+            template_tokens = tokenizer.encode(x)
+        else:
+            template_tokens = tokenizer(x)
+        if isinstance(template_tokens, dict) and 'input_ids' in template_tokens:
+            n_tokens = len(tokenizer.encode(x)['input_ids'])
+        else:
+            n_tokens = len(tokenizer.encode(x))
+    elif token_count_fun is not None:
+        assert callable(token_count_fun)
+        n_tokens = token_count_fun(x)
+    else:
+        tokenizer = FakeTokenizer()
+        n_tokens = tokenizer.num_tokens_from_string(x)
+    return n_tokens
+
+
+def reverse_ucurve_list(lst):
+    if not lst:
+        return []
+    if len(lst) == 1:
+        return lst
+    if len(lst) == 2:
+        return [lst[1], lst[0]]
+
+    front_list = []
+    end_list = []
+
+    for i, item in enumerate(lst):
+        if i % 2 == 0:
+            end_list.append(item)
+        else:
+            front_list.append(item)
+
+    return front_list + end_list[::-1]
+
+
+def undo_reverse_ucurve_list(lst):
+    if not lst:
+        return []
+    if len(lst) == 1:
+        return lst
+    if len(lst) == 2:
+        return [lst[1], lst[0]]
+
+    # Split the list into two halves: the first half and the second half (reversed)
+    mid = len(lst) // 2
+    first_half = lst[:mid]
+    second_half = lst[mid:][::-1]
+
+    # Merge the two halves by taking elements alternatively from the second half and then the first half
+    result = []
+    for i in range(mid):
+        result.append(second_half[i])
+        result.append(first_half[i])
+
+    # If the length of the list is odd, append the last element of the second half
+    if len(lst) % 2 != 0:
+        result.append(second_half[-1])
+
+    return result
+
+
+def get_size(start_path = '.'):
+    total_size = 0
+    for dirpath, dirnames, filenames in os.walk(start_path):
+        for f in filenames:
+            fp = os.path.join(dirpath, f)
+            # skip if it is symbolic link
+            if not os.path.islink(fp):
+                total_size += os.path.getsize(fp)
+
+    return total_size
+
+
+def get_test_name_core():
+    tn = os.environ['PYTEST_CURRENT_TEST'].split(':')[-1]
+    tn = "_".join(tn.split(' ')[:-1])  # skip (call) at end
+    return sanitize_filename(tn)

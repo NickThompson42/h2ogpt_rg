@@ -44,7 +44,7 @@ CUDA_VISIBLE_DEVICES=0 python generate.py --base_model=Llama-2-70B-chat-GPTQ --l
 ```
 which gives about 12 tokens/sec.  For 7b run:
 ```bash
-python generate.py --base_model=TheBloke/Llama-2-7b-Chat-GPTQ --load_gptq="gptq_model-4bit-128g" --use_safetensors=True --prompt_type=llama2 --save_dir='save`
+python generate.py --base_model=TheBloke/Llama-2-7b-Chat-GPTQ --load_gptq="model" --use_safetensors=True --prompt_type=llama2 --save_dir='save`
 ```
 For full 16-bit with 16k context across all GPUs:
 ```bash
@@ -55,23 +55,67 @@ and running on 4xA6000 gives about 4tokens/sec consuming about 35GB per GPU of 4
 Or for GPTQ with RoPE:
 ```bash
 pip install transformers==4.31.0  # breaks load_in_8bit=True in some cases (https://github.com/huggingface/transformers/issues/25026)
-python generate.py --base_model=TheBloke/Llama-2-7b-Chat-GPTQ --load_gptq="gptq_model-4bit-128g" --use_safetensors=True --prompt_type=llama2 --score_model=None --save_dir='7bgptqrope4` --rope_scaling="{'type':'dynamic', 'factor':4}"
+python generate.py --base_model=TheBloke/Llama-2-7b-Chat-GPTQ --load_gptq="model" --use_safetensors=True --prompt_type=llama2 --score_model=None --save_dir='7bgptqrope4` --rope_scaling="{'type':'dynamic', 'factor':4}"
 --max_max_new_tokens=15000 --max_new_tokens=15000 --max_time=12000
 ```
 for which the GPU only uses 5.5GB.  One can add (e.g.) ` --min_new_tokens=4096` to force generation to continue beyond model's training norms, although this may give lower quality responses.
 Currently, Hugging Face transformers does not support GPTQ directly except in text-generation-inference (TGI) server, but TGI does not support RoPE scaling.  Also, vLLM supports LLaMa2 and AutoGPTQ but not RoPE scaling.  Only exllama supports AutoGPTQ with RoPE scaling.
+
+##### AutoAWQ
+
+For 13B on 1 24GB board using about 14GB:
+```bash
+CUDA_VISIBLE_DEVICES=0 python generate.py --base_model=TheBloke/Llama-2-13B-chat-AWQ --score_model=None --load_awq=model --use_safetensors=True --prompt_type=llama2
+```
+or for 70B on 1 48GB board using about 39GB:
+```bash
+CUDA_VISIBLE_DEVICES=0 python generate.py --base_model=TheBloke/Llama-2-70B-chat-AWQ --score_model=None --load_awq=model --use_safetensors=True --prompt_type=llama2
+```
+or for 70B on 2 24GB boards:
+```bash
+CUDA_VISIBLE_DEVICES=2,3 python generate.py --base_model=TheBloke/Llama-2-70B-chat-AWQ --score_model=None --load_awq=model --use_safetensors=True --prompt_type=llama2
+```
+
+See [for more details](https://github.com/casper-hansen/AutoAWQ).
+
+To run vLLM with 70B on 2 A100's using h2oGPT docker with vLLM built-in do:
+```bash
+docker run -d \
+    --runtime=nvidia \
+    --gpus '"device=0,1"' \
+    --shm-size=10.24gb \
+    -p 5000:5000 \
+    --entrypoint /h2ogpt_conda/vllm_env/bin/python3.10 \
+    -e NCCL_IGNORE_DISABLED_P2P=1 \
+    -v /etc/passwd:/etc/passwd:ro \
+    -v /etc/group:/etc/group:ro \
+    -u `id -u`:`id -g` \
+    -v "${HOME}"/.cache:/workspace/.cache \
+    --network host \
+    gcr.io/vorvan/h2oai/h2ogpt-runtime:0.1.0 -m vllm.entrypoints.openai.api_server \
+        --port=5002 \
+        --host=0.0.0.0 \
+        --model=h2oai/h2ogpt-4096-llama2-70b-chat-4bit \
+        --tensor-parallel-size=2 \
+        --seed 1234 \
+        --trust-remote-code \
+	      --max-num-batched-tokens 8192 \
+	      --quantization awq \
+        --download-dir=/workspace/.cache/huggingface/hub &>> logs.vllm_server.70b_awq.txt
+```
+Can run same thing with 4 GPUs (to be safe) on 4*A10G like more available on AWS.
 
 ##### exllama
 
 Currently, only [exllama](https://github.com/turboderp/exllama) supports AutoGPTQ with RoPE scaling.
 To run RoPE scaling the LLaMa-2 7B model for 16k context:
 ```bash
-python generate.py --base_model=TheBloke/Llama-2-7b-Chat-GPTQ --load_gptq="gptq_model-4bit-128g" --use_safetensors=True --prompt_type=llama2 --save_dir='save' --load_exllama=True --revision=gptq-4bit-32g-actorder_True --rope_scaling="{'alpha_value':4}"
+python generate.py --base_model=TheBloke/Llama-2-7b-Chat-GPTQ --load_gptq="model" --use_safetensors=True --prompt_type=llama2 --save_dir='save' --load_exllama=True --revision=gptq-4bit-32g-actorder_True --rope_scaling="{'alpha_value':4}"
 ```
 which shows how to control `alpha_value` and the `revision` for a given model on [TheBloke/Llama-2-7b-Chat-GPTQ](https://huggingface.co/TheBloke/Llama-2-7b-Chat-GPTQ).  Be careful as setting `alpha_value` higher consumes substantially more GPU memory.  Also, some models have wrong config values for `max_position_embeddings` or `max_sequence_length`, and we try to fix those for LLaMa2 if `llama-2` appears in the lower-case version of the model name.
 Another type of model is
 ```bash
-python generate.py --base_model=TheBloke/Nous-Hermes-Llama2-GPTQ --load_gptq="gptq_model-4bit-128g" --use_safetensors=True --prompt_type=llama2 --save_dir='save' --load_exllama=True --revision=gptq-4bit-32g-actorder_True --rope_scaling="{'alpha_value':4}"
+python generate.py --base_model=TheBloke/Nous-Hermes-Llama2-GPTQ --load_gptq="model" --use_safetensors=True --prompt_type=llama2 --save_dir='save' --load_exllama=True --revision=gptq-4bit-32g-actorder_True --rope_scaling="{'alpha_value':4}"
 ```
 and note the different `prompt_type`.  For LLaMa2 70B run:
 ```bash
@@ -80,6 +124,11 @@ python generate.py --base_model=TheBloke/Llama-2-70B-chat-GPTQ --load_gptq=gptq_
 which uses about 48GB of memory on 1 GPU and runs at about 12 tokens/second on an A6000, which is about half the speed of 16-bit if run that on 2*A100 GPUs.
 
 With exllama, ensure `--concurrency_count=1` else the model will share states and mix-up concurrent requests.
+
+One can set other exllama options by passing `--exllama_dict`, E.g. for LLaMa-2-70B on 2 GPUs each using 20GB, do:
+```bash
+python generate.py --base_model=TheBloke/Llama-2-70B-chat-GPTQ --load_exllama=True --use_safetensors=True --use_gpu_id=False --load_gptq=main --prompt_type=llama2 --exllama_dict="{'set_auto_map':'20,20'}"
+```
 
 ##### For LLaMa.cpp on GPU run:
 ```bash

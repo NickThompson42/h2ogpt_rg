@@ -1,10 +1,52 @@
 ## Frequently asked questions
 
+### RoPE scaling and Long Context Models
+
+For long context models that have been tuned for a specific size, you have to only use that specific size by setting the `--rope_scaling` exactly correctly, e.g:
+
+```bash
+python generate.py --rope_scaling="{'type':'linear','factor':4}" --base_model=lmsys/vicuna-13b-v1.5-16k --hf_embedding_model=sentence-transformers/all-MiniLM-L6-v2 --load_8bit=True --langchain_mode=UserData --user_path=user_path --prompt_type=vicuna11 --h2ocolors=False
+````
+
+If the model is Hugging Face based and already has a `config.json` entry with `rope_scaling` in it, we will use that if you do not pass `--rope_scaling`.
+
+### Migration from Chroma < 0.4 to > 0.4
+
+#### Option 1: Use old Chroma for old DBs
+
+Do nothing as user.  h2oGPT will by default not migrate for old databases.  This is the default way handled internally by requirements added in `requirements_optional_langchain.txt` by adding special wheels for old versions of chromadb and hnswlib, handling migration better than chromadb itself.
+
+#### Option 2: Automatically Migrate
+
+h2oGPT by default does not migrate automatically with `--auto_migrate_db=False` for `generate.py`.  One can set this to `True` for auto-migration, which may time some time for larger databases.  This will occur on-demand when accessing a database.  This takes about 0.03s per chunk.
+
+#### Option 3: Manually Migrate
+
+One can set that to False and manually migrate databases by doing the following.
+
+* Install and run migration tool
+```
+pip install chroma-migrate
+chroma-migrate
+```
+* Choose DuckDB
+* Choose "Files I can use ..."
+* Choose your collection path, e.g. `db_dir_UserData` for collection name `UserData`
+
 ### Adding Models
 
 One can choose any Hugging Face model or quantized GGML model file in h2oGPT.
 
-Hugging Face models are passed via `--base_model` in all cases, with an extra `--load_gptq` for GPTQ models, e.g., by [TheBloke](https://huggingface.co/TheBloke).  Hugging Face models are automatically downloaded to the Hugging Face .cache folder (in home folder).
+Hugging Face models are passed via `--base_model` in all cases, with an extra `--load_gptq` for GPTQ models or an extra `--load_awq` for AWQ models, e.g., by [TheBloke](https://huggingface.co/TheBloke).  E.g. for AutoGPTQ:
+```bash
+python generate.py --base_model=TheBloke/Nous-Hermes-13B-GPTQ --load_gptq=model --use_safetensors=True --prompt_type=instruct
+```
+or for AWQ models:
+```bash
+python generate.py --base_model=TheBloke/Llama-2-13B-chat-AWQ --load_awq=model --use_safetensors=True --prompt_type=llama2
+```
+
+Hugging Face models are automatically downloaded to the Hugging Face .cache folder (in home folder).
 
 GGML v3 quantized models are supported, and [TheBloke](https://huggingface.co/TheBloke) also has many of those, e.g.
 ```bash
@@ -116,7 +158,7 @@ python generate.py --base_model=h2oai/h2ogpt-4096-llama2-13b-chat  --score_model
 
 For arbitrary tasks, good to use uncensored models like [Falcon 40 GM](https://huggingface.co/h2oai/h2ogpt-gm-oasst1-en-2048-falcon-40b-v2).  If censored is ok, then [LLama-2 Chat](https://huggingface.co/h2oai/h2ogpt-4096-llama2-70b-chat) are ok. Choose model size according to your system specs.
 
-For the UI, CLI, or EVAL this means editing the `System Pre-Context` text box in expert settings.  When starting h2oGPT, one can pass `--context` or `--iinput` for setting a fixed default context choice and fixed default instruction choice.  Note if no context is passed but `--chat_context=True`, then that function sets the context.
+For the UI, CLI, or EVAL this means editing the `System Pre-Context` text box in expert settings.  When starting h2oGPT, one can pass `--system_prompt` to give a model a system prompt if it supports that, `--context` to pre-append some raw context, `--chat_conversation` to pre-append a conversation for instruct/chat models, `--text_context_list` to fill context up to possible allowed `max_seq_len` with strings, with first most relevant to appear near prompt, or `--iinput` for a default input (to instruction for pure instruct models) choice.
 
 Or for API, passing `context` variable.  This can be filled with arbitrary things, including actual conversations to prime the model, although if a conversation then need to put in prompts like:
 ```python
@@ -142,6 +184,27 @@ print(response)
 See for example: https://github.com/h2oai/h2ogpt/blob/d3334233ca6de6a778707feadcadfef4249240ad/tests/test_prompter.py#L47 .
 
 Note that even if the prompting is not perfect or matches the model, smarter models will still do quite well, as long as you give their answers as part of context.
+
+If just wanting to pre-append a conversation, then use `chat_conversation` instead and h2oGPT will generate the context for the given instruct/chat model:
+```python
+from gradio_client import Client
+import ast
+
+HOST_URL = "http://localhost:7860"
+client = Client(HOST_URL)
+
+# string of dict for input
+prompt = 'Who are you?'
+chat_conversation = [("Who are you?", "I am a pixie filled with fairy dust"), ("What kind of pixie are you?", "Magical")]
+kwargs = dict(instruction_nochat=prompt, chat_conversation=chat_conversation)
+res = client.predict(str(dict(kwargs)), api_name='/submit_nochat_api')
+
+# string of dict for output
+response = ast.literal_eval(res)['response']
+print(response)
+```
+
+Note that if give `context` and `chat_conversation` and `text_context_list`, then `context` is put first, then `chat_conversation`, then `text_context_list` as part of document Q/A prompting.  A `system_prompt` can also be passed, which can overpower any `context` or `chat_conversation` depending upon details.
 
 ### Token access to Hugging Face models:
 
@@ -173,6 +236,12 @@ which uses good but smaller base model, embedding model, and no response score m
 python generate.py --base_model=h2oai/h2ogpt-gm-oasst1-en-2048-falcon-7b-v3 --hf_embedding_model=sentence-transformers/all-MiniLM-L6-v2 --score_model=None --load_4bit=True --langchain_mode='UserData'
 ```
 This uses 5800MB to startup, then soon drops to 5075MB after torch cache is cleared. Asking a simple question uses up to 6050MB. Adding a document uses no more new GPU memory.  Asking a question uses up to 6312MB for a few chunks (default), then drops back down to 5600MB.
+
+For some models, you can restrict the use of context to use less memory.  This does not work for long context models trained with static/linear RoPE scaling, for which the full static scaling should be used.  Otherwise, e.g. for LLaMa-2 you can use
+```bash
+python generate.py --base_model='llama' --prompt_type=llama2 --score_model=None --langchain_mode='UserData' --user_path=user_path --model_path_llama=https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGML/resolve/main/llama-2-7b-chat.ggmlv3.q8_0.bin --max_seq_len=2048
+```
+even though normal value is `--max_seq_len=4096` if the option is not passed as inferred from the model `config.json`.
 
 On CPU case, a good model that's still low memory is to run:
 ```bash

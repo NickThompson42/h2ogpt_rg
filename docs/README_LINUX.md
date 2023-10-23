@@ -21,6 +21,7 @@ These instructions are for Ubuntu x86_64 (other linux would be similar with diff
   
   Alternatively, on newer Ubuntu systems you can get Python 3.10 environment setup by doing:
   ```bash
+  sudo apt-get update
   sudo apt-get install -y build-essential gcc python3.10-dev
   virtualenv -p python3 h2ogpt
   source h2ogpt/bin/activate
@@ -50,18 +51,19 @@ These instructions are for Ubuntu x86_64 (other linux would be similar with diff
   ```bash
   export CUDA_HOME=/usr/local/cuda-11.7
   ```
+  This is also required for A100/H100+ and use CUDA 11.8+.
+
   If you do not plan to use one of those packages, you can just use the non-dev version:
   ```bash
   conda install cudatoolkit=11.7 -c conda-forge -y
   export CUDA_HOME=$CONDA_PREFIX 
   ```
+  Choose cu118 for A100/H100+.
   
 * Install dependencies:
     ```bash
-    git clone https://github.com/h2oai/h2ogpt.git
-    cd h2ogpt
     # fix any bad env
-    pip uninstall -y pandoc pypandoc pypandoc-binary
+    pip uninstall -y pandoc pypandoc pypandoc-binary flash-attn
     # broad support, but no training-time or data creation dependencies
     
     # CPU only:
@@ -70,31 +72,31 @@ These instructions are for Ubuntu x86_64 (other linux would be similar with diff
     # GPU only:
     pip install -r requirements.txt --extra-index https://download.pytorch.org/whl/cu117
     ```
+    Choose cu118 for A100/H100+.
 * Install document question-answer dependencies:
     ```bash
     # May be required for jq package:
-    sudo apt-get install autoconf libtool
+    sudo apt-get -y install autoconf libtool
     # Required for Doc Q/A: LangChain:
-    pip install -r reqs_optional/requirements_optional_langchain.txt
+    pip install -r reqs_optional/requirements_optional_langchain.txt --extra-index https://download.pytorch.org/whl/cu117
     # Required for CPU: LLaMa/GPT4All:
-    pip install -r reqs_optional/requirements_optional_gpt4all.txt
+    pip install -r reqs_optional/requirements_optional_gpt4all.txt --extra-index https://download.pytorch.org/whl/cu117
     # Optional: PyMuPDF/ArXiv:
-    pip install -r reqs_optional/requirements_optional_langchain.gpllike.txt
+    pip install -r reqs_optional/requirements_optional_langchain.gpllike.txt --extra-index https://download.pytorch.org/whl/cu117
     # Optional: Selenium/PlayWright:
-    pip install -r reqs_optional/requirements_optional_langchain.urls.txt
+    pip install -r reqs_optional/requirements_optional_langchain.urls.txt --extra-index https://download.pytorch.org/whl/cu117
     # Optional: support docx, pptx, ArXiv, etc. required by some python packages
     sudo apt-get install -y libmagic-dev poppler-utils tesseract-ocr libtesseract-dev libreoffice
     # Improved OCR with DocTR:
-    conda install -c conda-forge pygobject
-    pip install -r reqs_optional/requirements_optional_doctr.txt
+    conda install -y -c conda-forge pygobject
+    pip install -r reqs_optional/requirements_optional_doctr.txt --extra-index https://download.pytorch.org/whl/cu117
     # go back to older onnx so Tesseract OCR still works
-    pip install onnxruntime==1.15.0 onnxruntime-gpu==1.15.0
+    pip install onnxruntime==1.15.0 onnxruntime-gpu==1.15.0 --extra-index https://download.pytorch.org/whl/cu117
     # Optional: for supporting unstructured package
     python -m nltk.downloader all
     # Optional but required for PlayWright
     playwright install --with-deps
 * GPU Optional: For AutoGPTQ support on x86_64 linux
-    Try H2O.ai's pre-built wheel:
     ```bash
     pip uninstall -y auto-gptq ; pip install https://github.com/PanQiWei/AutoGPTQ/releases/download/v0.4.2/auto_gptq-0.4.2+cu118-cp310-cp310-linux_x86_64.whl
     # in-transformers support of AutoGPTQ
@@ -106,6 +108,17 @@ These instructions are for Ubuntu x86_64 (other linux would be similar with diff
     ```
     If one sees `CUDA extension not installed` in output after loading model, one needs to compile AutoGPTQ, else will use double memory and be slower on GPU.
     See [AutoGPTQ](README_GPU.md#autogptq) about running AutoGPT models.
+* GPU Optional: For AutoAWQ support on x86_64 linux
+    ```bash
+    pip uninstall -y autoawq ; pip install autoawq
+    ```
+    If this has issues, you need to build:
+    ```bash
+    pip uninstall -y autoawq
+    git clone https://github.com/casper-hansen/AutoAWQ
+    cd AutoAWQ
+    pip install .
+    ```
 * GPU Optional: For exllama support on x86_64 linux
     ```bash
     pip uninstall -y exllama ; pip install https://github.com/jllllll/exllama/releases/download/0.0.13/exllama-0.0.13+cu118-cp310-cp310-linux_x86_64.whl --no-cache-dir
@@ -129,7 +142,7 @@ These instructions are for Ubuntu x86_64 (other linux would be similar with diff
     export FORCE_CMAKE=1
     CMAKE_ARGS="-DLLAMA_CUBLAS=on" FORCE_CMAKE=1 pip install llama-cpp-python==0.1.73 --no-cache-dir --verbose
    ```
-  * By default, we set `n_gpu_layers` to large value, so llama.cpp offloads all layers for maximum GPU performance.  You can control this by passing `--llamacpp_dict="{n_gpu_layers=20}"` for value 20, or setting in UI.  For highest performance, offload *all* layers.
+  * By default, we set `n_gpu_layers` to large value, so llama.cpp offloads all layers for maximum GPU performance.  You can control this by passing `--llamacpp_dict="{'n_gpu_layers':20}"` for value 20, or setting in UI.  For highest performance, offload *all* layers.
     That is, one gets maximum performance if one sees in startup of h2oGPT all layers offloaded:
       ```text
     llama_model_load_internal: offloaded 35/35 layers to GPU
@@ -139,6 +152,12 @@ These instructions are for Ubuntu x86_64 (other linux would be similar with diff
   * For LLaMa2, can set `max_tokens` to a larger value for longer output.
   * If one sees `/usr/bin/nvcc` mentioned in errors, that file needs to be removed as would likely conflict with version installed for conda.  
   * Note that once `llama-cpp-python` is compiled to support CUDA, it no longer works for CPU mode, so one would have to reinstall it without the above options to recovers CPU mode or have a separate h2oGPT env for CPU mode.
+
+* Control Core Count for chroma < 0.4 using chromamigdb package:
+    * Duckdb used by Chroma < 0.4 uses DuckDB 0.8.1 that has no control over number of threads per database, `import duckdb` leads to all virtual cores as threads and each db consumes another number of threads equal to virtual cores.  To prevent this, one can rebuild duckdb using [this modification](https://github.com/h2oai/duckdb/commit/dcd8c1ffc53dd020623630efb99ba6a3a4cbc5ad) or one can try to use the prebuild wheel for x86_64 built on Ubuntu 20.
+        ```bash
+        pip install https://h2o-release.s3.amazonaws.com/h2ogpt/duckdb-0.8.2.dev4025%2Bg9698e9e6a8.d20230907-cp310-cp310-linux_x86_64.whl --no-cache-dir --force-reinstall --no-deps
+      ```
 
 ### Compile Install Issues
   * `/usr/local/cuda/include/crt/host_config.h:132:2: error: #error -- unsupported GNU version! gcc versions later than 11 are not supported!`
@@ -175,8 +194,7 @@ These instructions are for Ubuntu x86_64 (other linux would be similar with diff
   ```
   UI using LLaMa.cpp LLaMa2 model:
   ```bash
-  wget wget https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGML/resolve/main/llama-2-7b-chat.ggmlv3.q8_0.bin
-  python generate.py --base_model='llama' --prompt_type=llama2 --score_model=None --langchain_mode='UserData' --user_path=user_path
+  python generate.py --base_model='llama' --prompt_type=llama2 --score_model=None --langchain_mode='UserData' --user_path=user_path --model_path_llama=https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGML/resolve/main/llama-2-7b-chat.ggmlv3.q8_0.bin --max_seq_len=4096
   ```
   which works on CPU or GPU (assuming llama cpp python package compiled against CUDA or Metal).
 

@@ -10,6 +10,7 @@ from exllama.generator import ExLlamaGenerator
 from exllama.lora import ExLlamaLora
 import os, glob
 
+BROKEN_UNICODE = b'\\ufffd'.decode('unicode_escape')
 
 class H2OExLlamaTokenizer(ExLlamaTokenizer):
     def __call__(self, text, *args, **kwargs):
@@ -296,9 +297,10 @@ class Exllama(LLM):
             text_callback = partial(
                 run_manager.on_llm_new_token, verbose=self.verbose
             )
-        # parent handler of streamer expects to see prompt first else output="" and lose if prompt=None in prompter
-        if text_callback:
-            text_callback(prompt)
+        # No longer assume below, assume always just new text so various langchain things work
+        ##### parent handler of streamer expects to see prompt first else output="" and lose if prompt=None in prompter
+        #### text_callback:
+        ####    text_callback(prompt)
         text = ""
         while (generator.gen_num_tokens() <= (
                 self.max_seq_len - 4)):  # Slight extra padding space as we seem to occassionally get a few more than 1-2 tokens
@@ -315,7 +317,13 @@ class Exllama(LLM):
             # Tokenize the string from the last new line, we can't just decode the last token due to how sentencepiece decodes.
             stuff = generator.tokenizer.decode(generator.sequence_actual[0][last_newline_pos:])
             cursor_tail = len(stuff)
+            has_unicode_combined = cursor_tail<cursor_head
             text_chunk = stuff[cursor_head:cursor_tail]
+            if has_unicode_combined:
+                # replace the broken unicode character with combined one
+                text=text[:-2]
+                text_chunk = stuff[cursor_tail-1:cursor_tail]
+                
             cursor_head = cursor_tail
 
             # Append the generated chunk to our stream buffer
@@ -343,7 +351,7 @@ class Exllama(LLM):
                 # Partially matched a stop, continue buffering but don't yield.
                 continue
             elif status == self.MatchStatus.NO_MATCH:
-                if text_callback:
+                if text_callback and not (text_chunk == BROKEN_UNICODE):
                     text_callback(text_chunk)
                 yield text  # Not a stop, yield the match buffer.
 

@@ -24,7 +24,7 @@ For newer builds of windows versions of 10/11.
   * Go to installation tab, then apply changes.
 * Download and install [Miniconda](https://docs.conda.io/projects/conda/en/latest/user-guide/install/windows.html)
 * Run Miniconda shell (not powershell!) as Administrator
-* Run: `set path=%path%;c:\MinGW\msys\1.0\bin\` to get C++ in path
+* Run: `set path=%path%;c:\MinGW\msys\1.0\bin\` to get C++ in path.  In some cases it may be instead correct to use `set path=%path%;c:\MinGW\bin\`
 * Download latest nvidia driver for windows if one has old drivers before CUDA 11.7 supported
 * Confirm can run `nvidia-smi` and see driver version
 * Setup Conda Environment:
@@ -51,7 +51,10 @@ For newer builds of windows versions of 10/11.
     cd h2ogpt
     ```
 * Install primary dependencies.
-
+  * Remove any bad dependencies that existed (required for new transformers it seems):
+      ```bash
+      pip uninstall flash-attn
+       ```
   * For CPU Only:
       ```bash
       pip install -r requirements.txt --extra-index https://download.pytorch.org/whl/cpu
@@ -60,21 +63,25 @@ For newer builds of windows versions of 10/11.
       ```bash
       pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu117
        ```
-    Optional: for bitsandbytes 4-bit and 8-bit:
-       ```bash
-       pip uninstall bitsandbytes -y
-       pip install https://github.com/jllllll/bitsandbytes-windows-webui/releases/download/wheels/bitsandbytes-0.41.1-py3-none-win_amd64.whl
+    In some cases this may lead to the message `No GPU` and in which case you can run next something like:
+      ```bash
+      pip install torch==2.0.0+cu117 torchvision==0.15.1+cu117 torchaudio==2.0.1 --index-url https://download.pytorch.org/whl/cu117
        ```
+ * Optional: for bitsandbytes 4-bit and 8-bit:
+   ```bash
+   pip uninstall bitsandbytes -y
+   pip install https://github.com/jllllll/bitsandbytes-windows-webui/releases/download/wheels/bitsandbytes-0.41.1-py3-none-win_amd64.whl
+   ```
 * Install document question-answer dependencies:
    ```bash
     # Required for Doc Q/A: LangChain:
-    pip install -r reqs_optional/requirements_optional_langchain.txt
+    pip install -r reqs_optional/requirements_optional_langchain.txt --extra-index-url https://download.pytorch.org/whl/cu117
     # Required for CPU: LLaMa/GPT4All:
-    pip install -r reqs_optional/requirements_optional_gpt4all.txt
+    pip install -r reqs_optional/requirements_optional_gpt4all.txt --extra-index-url https://download.pytorch.org/whl/cu117
     # Optional: PyMuPDF/ArXiv:
-    pip install -r reqs_optional/requirements_optional_langchain.gpllike.txt
+    pip install -r reqs_optional/requirements_optional_langchain.gpllike.txt --extra-index-url https://download.pytorch.org/whl/cu117
     # Optional: Selenium/PlayWright:
-    pip install -r reqs_optional/requirements_optional_langchain.urls.txt
+    pip install -r reqs_optional/requirements_optional_langchain.urls.txt --extra-index-url https://download.pytorch.org/whl/cu117
     # Optional: for supporting unstructured package
     python -m nltk.downloader all
     # Optional but required for PlayWright
@@ -84,6 +91,11 @@ For newer builds of windows versions of 10/11.
    ```bash
     pip uninstall -y auto-gptq
     pip install https://github.com/PanQiWei/AutoGPTQ/releases/download/v0.4.2/auto_gptq-0.4.2+cu118-cp310-cp310-win_amd64.whl
+   ```
+* GPU Optional: For optional AutoAWQ support:
+   ```bash
+    pip uninstall -y autoawq
+    pip install autoawq
    ```
 * GPU Optional: For optional exllama support:
     ```bash
@@ -107,7 +119,7 @@ For newer builds of windows versions of 10/11.
     set FORCE_CMAKE=1
     pip install llama-cpp-python==0.1.68 --no-cache-dir --verbose
     ```
-  * By default, we set `n_gpu_layers` to large value, so llama.cpp offloads all layers for maximum GPU performance.  You can control this by passing `--llamacpp_dict="{n_gpu_layers=20}"` for value 20, or setting in UI.  For highest performance, offload *all* layers.
+  * By default, we set `n_gpu_layers` to large value, so llama.cpp offloads all layers for maximum GPU performance.  You can control this by passing `--llamacpp_dict="{'n_gpu_layers':20}"` for value 20, or setting in UI.  For highest performance, offload *all* layers.
     That is, one gets maximum performance if one sees in startup of h2oGPT all layers offloaded:
       ```text
     llama_model_load_internal: offloaded 35/35 layers to GPU
@@ -125,9 +137,10 @@ For newer builds of windows versions of 10/11.
 
   * Click [Download LLaMa2 Model](https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGML/resolve/main/llama-2-7b-chat.ggmlv3.q8_0.bin) and place file in h2oGPT repo directory.  Any other TheBloke GGML v3 model can be used by changing value of `--model_path_llama` to path previously downloaded or URL.
        ```bash
-       python generate.py --base_model='llama' --prompt_type=llama2 --score_model=None --langchain_mode='UserData' --user_path=user_path
+       python generate.py --base_model='llama' --prompt_type=llama2 --score_model=None --langchain_mode='UserData' --user_path=user_path --model_path_llama=https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGML/resolve/main/llama-2-7b-chat.ggmlv3.q8_0.bin --max_seq_len=4096
        ```
-    for an absolute windows path, change to `--user_path=C:\Users\YourUsername\h2ogpt` or something similar for some user `YourUsername`.
+    Choose some other `model_path_llama` from TheBloke if desired, e.g. 13B.  If no model passed, the 7B LLaMa-2 GGML is used.
+    For an absolute windows path, change to `--user_path=C:\Users\YourUsername\h2ogpt` or something similar for some user `YourUsername`.
       If llama-cpp-python was compiled with CUDA support, you should see in the output:
     ```text
     Starting get_model: llama

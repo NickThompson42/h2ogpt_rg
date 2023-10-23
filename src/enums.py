@@ -36,6 +36,9 @@ class PromptType(Enum):
     beluga = 30
     wizard3nospace = 31
     one_shot = 32
+    falcon_chat = 33
+    mistral = 34
+    zephyr = 35
 
 
 class DocumentSubset(Enum):
@@ -91,13 +94,18 @@ class LangChainAction(Enum):
     SUMMARIZE_MAP = "Summarize"
     SUMMARIZE_ALL = "Summarize_all"
     SUMMARIZE_REFINE = "Summarize_refine"
+    EXTRACT = "Extract"
 
 
 class LangChainAgent(Enum):
     """LangChain agents"""
 
     SEARCH = "Search"
-    # CSV = "csv"  # WIP
+    COLLECTION = "Collection"
+    PYTHON = "Python"
+    CSV = "CSV"
+    PANDAS = "Pandas"
+    JSON = 'JSON'
 
 
 no_server_str = no_lora_str = no_model_str = '[None/Remove]'
@@ -107,11 +115,16 @@ no_server_str = no_lora_str = no_model_str = '[None/Remove]'
 model_token_mapping = {
     "gpt-4": 8192,
     "gpt-4-0314": 8192,
+    "gpt-4-0613": 8192,  # supports function tools
     "gpt-4-32k": 32768,
     "gpt-4-32k-0314": 32768,
+    "gpt-4-32k-0613": 32768,  # supports function tools
     "gpt-3.5-turbo": 4096,
-    "gpt-3.5-turbo-16k": 16 * 1024,
     "gpt-3.5-turbo-0301": 4096,
+    "gpt-3.5-turbo-0613": 4096,  # supports function tools
+    "gpt-3.5-turbo-16k": 16385,
+    "gpt-3.5-turbo-16k-0613": 16385,  # supports function tools
+    "gpt-3.5-turbo-instruct": 4096,
     "text-ada-001": 2049,
     "ada": 2049,
     "text-babbage-001": 2040,
@@ -126,6 +139,19 @@ model_token_mapping = {
     "code-cushman-002": 2048,
     "code-cushman-001": 2048,
 }
+
+openai_supports_functiontools = ["gpt-4-0613", "gpt-4-32k-0613", "gpt-3.5-turbo-0613", "gpt-3.5-turbo-16k-0613"]
+
+
+def does_support_functiontools(inference_server, model_name):
+    if any([inference_server.startswith(x) for x in ['openai_azure', 'openai_azure_chat']]):
+        return model_name.lower() in openai_supports_functiontools
+    elif any([inference_server.startswith(x) for x in ['openai', 'openai_chat']]):
+        # assume OpenAI serves updated models
+        return True
+    else:
+        return False
+
 
 font_size = 2
 head_acc = 40  # 40 for 6-way
@@ -150,17 +176,17 @@ def get_langchain_prompts(pre_prompt_query, prompt_query, pre_prompt_summary, pr
                        model_path_llama and 'llama-2' in model_path_llama.lower()) or \
             model_name in [None, '']:
         # use when no model, like no --base_model
-        pre_prompt_query1 = "Pay attention and remember information below, which will help to answer the question or imperative after the context ends.\n"
+        pre_prompt_query1 = "Pay attention and remember the information below, which will help to answer the question or imperative after the context ends.\n"
         prompt_query1 = "According to only the information in the document sources provided within the context above, "
     elif inference_server and inference_server.startswith('openai'):
-        pre_prompt_query1 = "Pay attention and remember information below, which will help to answer the question or imperative after the context ends.  If the answer cannot be primarily obtained from information within the context, then respond that the answer does not appear in the context of the documents.\n"
+        pre_prompt_query1 = "Pay attention and remember the information below, which will help to answer the question or imperative after the context ends.  If the answer cannot be primarily obtained from information within the context, then respond that the answer does not appear in the context of the documents.\n"
         prompt_query1 = "According to (primarily) the information in the document sources provided within context above, "
     else:
         pre_prompt_query1 = ""
         prompt_query1 = ""
 
     pre_prompt_summary1 = """In order to write a concise single-paragraph or bulleted list summary, pay attention to the following text\n"""
-    prompt_summary1 = "Using only the text above, write a condensed and concise summary of key results (preferably as bullet points):\n"
+    prompt_summary1 = "Using only the information in the document sources above, write a condensed and concise summary of key results (preferably as bullet points):\n"
 
     if pre_prompt_query is None:
         pre_prompt_query = pre_prompt_query1
@@ -186,6 +212,7 @@ def gr_to_lg(image_loaders,
     if url_loaders is None:
         url_loaders = kwargs['url_loaders_options0']
     # translate:
+    # 'auto' wouldn't be used here
     ret = dict(
         # urls
         use_unstructured='Unstructured' in url_loaders,
@@ -193,15 +220,17 @@ def gr_to_lg(image_loaders,
         use_selenium='Selenium' in url_loaders,
 
         # pdfs
-        use_pymupdf='PyMuPDF' in pdf_loaders,
-        use_unstructured_pdf='Unstructured' in pdf_loaders,
-        use_pypdf='PyPDF' in pdf_loaders,
-        enable_pdf_ocr='on' if 'OCR' in pdf_loaders else 'auto',
-        try_pdf_as_html='TryHTML' in pdf_loaders,
+        use_pymupdf='on' if 'PyMuPDF' in pdf_loaders else 'off',
+        use_unstructured_pdf='on' if 'Unstructured' in pdf_loaders else 'off',
+        use_pypdf='on' if 'PyPDF' in pdf_loaders else 'off',
+        enable_pdf_ocr='on' if 'OCR' in pdf_loaders else 'off',
+        enable_pdf_doctr='on' if 'DocTR' in pdf_loaders else 'off',
+        try_pdf_as_html='on' if 'TryHTML' in pdf_loaders else 'off',
 
         # images
         enable_ocr='OCR' in image_loaders,
         enable_doctr='DocTR' in image_loaders,
+        enable_pix2struct='Pix2Struct' in image_loaders,
         enable_captions='Caption' in image_loaders or 'CaptionBlip2' in image_loaders,
     )
     if 'CaptionBlip2' in image_loaders:
@@ -210,3 +239,14 @@ def gr_to_lg(image_loaders,
     else:
         captions_model = kwargs['captions_model']
     return ret, captions_model
+
+
+invalid_key_msg = 'Invalid Access Key, request access key from sales@h2o.ai or jon.mckinney@h2o.ai'
+
+docs_ordering_types = ['best_first', 'best_near_prompt', 'reverse_ucurve_sort']
+
+docs_token_handlings = ['chunk', 'split_or_merge']
+
+docs_ordering_types_default = 'reverse_ucurve_sort'
+docs_token_handling_default = 'split_or_merge'
+docs_joiner_default = '\n\n'

@@ -230,14 +230,15 @@ We only support one embedding at a time for each database.
 
 So you could use src/make_db.py to make the db for different embeddings (`--hf_embedding_model` like gen.py, any HF model) for each collection (e.g. UserData, UserData2) for each source folders (e.g. user_path, user_path2), and then at generate.py time you can specify those different collection names in `--langchain_modes` and `--langchain_modes` and `--langchain_mode_paths`.  For example:
 ```bash
-python src/make_db.py --user_path=user_path --collection_name=UserData --hf_embedding_model=hkunlp/instructor-large
-python src/make_db.py --user_path=user_path2 --collection_name=UserData2 --hf_embedding_model=sentence-transformers/all-MiniLM-L6-v2
+python src/make_db.py --user_path=user_path --collection_name=UserData --langchain_type=shared --hf_embedding_model=hkunlp/instructor-large
+python src/make_db.py --user_path=user_path2 --collection_name=UserData2 --langchain_type=shared --hf_embedding_model=sentence-transformers/all-MiniLM-L6-v2
 ```
-then
+Note that `shared` is default type already, but we show above to show what options are relevant if want to change them.
+Then run:
 ```bash
-python generate.py --base_model='llama' --prompt_type=llama2 --score_model=None --langchain_mode='UserData' --langchain_modes=['UserData','UserData2'] --langchain_modes=['UserData','UserData2'] --langchain_mode_paths={'UserData':'user_path','UserData2':'user_path2'}
+python generate.py --base_model='llama' --prompt_type=llama2 --score_model=None --langchain_mode='UserData' --langchain_modes=['UserData','UserData2'] --langchain_mode_paths={'UserData':'user_path','UserData2':'user_path2'} --langchain_mode_types={'UserData':'shared','UserData2':'shared'} --model_path_llama=https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGML/resolve/main/llama-2-7b-chat.ggmlv3.q8_0.bin --max_seq_len=4096
 ```
-and watch-out for use of whitespace.  For `langchain_mode_paths` you can pass surrounded by "'s and have spaces.
+or choose 13B.  And watch-out for use of whitespace.  For `langchain_mode_paths` you can pass surrounded by "'s and have spaces.
 
 ### Choosing document types
 
@@ -252,8 +253,9 @@ print(image_types)
 Select types, and pass to `make_db` like:
 ```bash
 python src/make_db.py --user_path="/home/jon/Downloads/demo_data" --collection_name=VAData --enable_pdf_ocr='off' --selected_file_types="['pdf', 'html', 'htm']"
-python generate.py  --base_model='llama' --prompt_type=llama2 --score_model=None --langchain_mode=VAData --langchain_modes=['VAData']
+python generate.py  --base_model='llama' --prompt_type=llama2 --score_model=None --langchain_mode=VAData --langchain_modes=['VAData'] --model_path_llama=https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGML/resolve/main/llama-2-7b-chat.ggmlv3.q8_0.bin --max_seq_len=4096
 ```
+or choose 13B.
 
 To ensure a collection is persisted even when not using any athentication, be sure it is shared type, e.g.:
 ```bash
@@ -261,8 +263,11 @@ python generate.py --base_model='llama' --prompt_type=llama2 --score_model=None 
        --visible_tos_tab=False --visible_hosts_tab=False --visible_models_tab=False \
        --langchain_modes="['LLM','PersistData']" --langchain_mode=PersistData \
        --langchain_mode_types="{'PersistData':'shared'}" \
-       --top_k_docs=-1 --max_time=360 --save_dir=save
+       --top_k_docs=-1 --max_time=360 --save_dir=save \
+       --model_path_llama=https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGML/resolve/main/llama-2-7b-chat.ggmlv3.q8_0.bin \
+       --max_seq_len=4096
 ```
+or choose 13B.
 
 ### Note about Embeddings
 

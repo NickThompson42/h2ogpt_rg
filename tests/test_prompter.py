@@ -100,6 +100,7 @@ If a question does not make any sense, or is not factually coherent, explain why
 
 Hello! [/INST] Hi! </s><s>[INST] How are you? [/INST] I'm good </s><s>[INST] Go to the market? [/INST]"""
 
+prompt_llama2_pig = """<s>[INST] Who are you? [/INST] I am a big pig who loves to tell kid stories </s><s>[INST] Hello! [/INST] Hi! </s><s>[INST] How are you? [/INST] I'm good </s><s>[INST] Go to the market? [/INST]"""
 
 # Fastsys doesn't put space above before final [/INST], I think wrong, since with context version has space.
 # and llama2 code has space before it always: https://github.com/facebookresearch/llama/blob/6c7fe276574e78057f917549435a2554000a876d/llama/generation.py
@@ -123,7 +124,6 @@ Go to the market?
 ### Assistant:
 """
 
-
 prompt_beluga_sys = """### System:
 You are Stable Beluga, an AI that follows instructions extremely well. Help as much as you can. Remember, be safe, and don't do anything illegal.
 
@@ -145,31 +145,66 @@ Go to the market?
 ### Assistant:
 """
 
+prompt_falcon180 = """User: Hello!
+Falcon: Hi!
+User: How are you?
+Falcon: I'm good
+User: Go to the market?
+Falcon:"""
+
+prompt_falcon180_sys = """System: You are an intelligent and helpful assistant.
+User: Hello!
+Falcon: Hi!
+User: How are you?
+Falcon: I'm good
+User: Go to the market?
+Falcon:"""
+
+
+def get_mistral_prompt_with_context():
+    from transformers import AutoTokenizer
+    tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-Instruct-v0.1")
+    messages = [
+        {"role": "user", "content": "Hello!"},
+        {"role": "assistant", "content": "Hi!"},
+        {"role": "user", "content": "How are you?"},
+        {"role": "assistant", "content": "I'm good"},
+        {"role": "user", "content": "Go to the market?"},
+    ]
+
+    prompt_mistral = tokenizer.apply_chat_template(messages, tokenize=False)
+    return prompt_mistral
+
 
 @wrap_test_forked
-@pytest.mark.parametrize("prompt_type,use_system_prompt,expected",
+@pytest.mark.parametrize("prompt_type,system_prompt,chat_conversation,expected",
                          [
-                             ('vicuna11', False, prompt_fastchat),
-                             ('human_bot', False, prompt_humanbot),
-                             ('prompt_answer', False, prompt_prompt_answer),
-                             ('prompt_answer_openllama', False, prompt_prompt_answer_openllama),
-                             ('mptinstruct', False, prompt_mpt_instruct),
-                             ('mptchat', False, prompt_mpt_chat),
-                             ('falcon', False, prompt_falcon),
-                             ('llama2', False, prompt_llama2),
-                             ('llama2', True, prompt_llama2_sys),
-                             ('beluga', False, prompt_beluga),
-                             ('beluga', True, prompt_beluga_sys),
+                             ('vicuna11', '', None, prompt_fastchat),
+                             ('human_bot', '', None, prompt_humanbot),
+                             ('prompt_answer', '', None, prompt_prompt_answer),
+                             ('prompt_answer_openllama', '', None, prompt_prompt_answer_openllama),
+                             ('mptinstruct', '', None, prompt_mpt_instruct),
+                             ('mptchat', '', None, prompt_mpt_chat),
+                             ('falcon', '', None, prompt_falcon),
+                             ('llama2', '', None, prompt_llama2),
+                             ('llama2', 'auto', None, prompt_llama2_sys),
+                             ('llama2', '', [('Who are you?', 'I am a big pig who loves to tell kid stories')],
+                              prompt_llama2_pig),
+                             ('beluga', '', None, prompt_beluga),
+                             ('beluga', 'auto', None, prompt_beluga_sys),
+                             ('falcon_chat', '', None, prompt_falcon180),
+                             ('falcon_chat', 'auto', None, prompt_falcon180_sys),
+                             ('mistral', '', None, get_mistral_prompt_with_context()),
                          ]
                          )
-def test_prompt_with_context(prompt_type, use_system_prompt, expected):
+def test_prompt_with_context(prompt_type, system_prompt, chat_conversation, expected):
     prompt_dict = None  # not used unless prompt_type='custom'
     langchain_mode = 'Disabled'
     add_chat_history_to_context = True
     chat = True
     model_max_length = 2048
     memory_restriction_level = 0
-    keep_sources_in_context1 = False
+    keep_sources_in_context = False
     iinput = ''
     stream_output = False
     debug = False
@@ -184,19 +219,24 @@ def test_prompt_with_context(prompt_type, use_system_prompt, expected):
                ]
     print("duration1: %s %s" % (prompt_type, time.time() - t0), flush=True)
     t0 = time.time()
-    context = history_to_context(history, langchain_mode,
-                                 add_chat_history_to_context,
-                                 prompt_type, prompt_dict, chat,
-                                 model_max_length, memory_restriction_level,
-                                 keep_sources_in_context1,
-                                 use_system_prompt)
+    context = history_to_context(history,
+                                 langchain_mode=langchain_mode,
+                                 add_chat_history_to_context=add_chat_history_to_context,
+                                 prompt_type=prompt_type,
+                                 prompt_dict=prompt_dict,
+                                 chat=chat,
+                                 model_max_length=model_max_length,
+                                 memory_restriction_level=memory_restriction_level,
+                                 keep_sources_in_context=keep_sources_in_context,
+                                 system_prompt=system_prompt,
+                                 chat_conversation=chat_conversation)
     print("duration2: %s %s" % (prompt_type, time.time() - t0), flush=True)
     t0 = time.time()
     instruction = history[-1][0]
 
     # get prompt
     prompter = Prompter(prompt_type, prompt_dict, debug=debug, chat=chat, stream_output=stream_output,
-                        use_system_prompt=use_system_prompt)
+                        system_prompt=system_prompt)
     # for instruction-tuned models, expect this:
     assert prompter.PreResponse
     assert prompter.PreInstruct
@@ -248,7 +288,6 @@ If a question does not make any sense, or is not factually coherent, explain why
 
 Go to the market? [/INST]"""
 
-
 # Fastsys doesn't put space above before final [/INST], I think wrong, since with context version has space.
 # and llama2 code has space before it always: https://github.com/facebookresearch/llama/blob/6c7fe276574e78057f917549435a2554000a876d/llama/generation.py
 
@@ -261,31 +300,51 @@ Go to the market?
 ### Assistant:
 """
 
-
 prompt_beluga1 = """### User:
 Go to the market?
 
 ### Assistant:
 """
 
+prompt_falcon1801 = """User: Go to the market?
+Falcon:"""
 
-@pytest.mark.parametrize("prompt_type,use_system_prompt,expected",
+prompt_falcon1801_sys = """System: You are an intelligent and helpful assistant.
+User: Go to the market?
+Falcon:"""
+
+
+def get_mistral_prompt():
+    from transformers import AutoTokenizer
+    tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-Instruct-v0.1")
+    messages = [
+        {"role": "user", "content": "Go to the market?"},
+    ]
+
+    prompt_mistral = tokenizer.apply_chat_template(messages, tokenize=False)
+    return prompt_mistral
+
+
+@pytest.mark.parametrize("prompt_type,system_prompt,expected",
                          [
-                             ('vicuna11', False, prompt_fastchat1),
-                             ('human_bot', False, prompt_humanbot1),
-                             ('prompt_answer', False, prompt_prompt_answer1),
-                             ('prompt_answer_openllama', False, prompt_prompt_answer_openllama1),
-                             ('mptinstruct', False, prompt_mpt_instruct1),
-                             ('mptchat', False, prompt_mpt_chat1),
-                             ('falcon', False, prompt_falcon1),
-                             ('llama2', False, prompt_llama21),
-                             ('llama2', True, prompt_llama21_sys),
-                             ('beluga', False, prompt_beluga1),
-                             ('beluga', True, prompt_beluga1_sys),
+                             ('vicuna11', '', prompt_fastchat1),
+                             ('human_bot', '', prompt_humanbot1),
+                             ('prompt_answer', '', prompt_prompt_answer1),
+                             ('prompt_answer_openllama', '', prompt_prompt_answer_openllama1),
+                             ('mptinstruct', '', prompt_mpt_instruct1),
+                             ('mptchat', '', prompt_mpt_chat1),
+                             ('falcon', '', prompt_falcon1),
+                             ('llama2', '', prompt_llama21),
+                             ('llama2', 'auto', prompt_llama21_sys),
+                             ('beluga', '', prompt_beluga1),
+                             ('beluga', 'auto', prompt_beluga1_sys),
+                             ('falcon_chat', '', prompt_falcon1801),
+                             ('falcon_chat', 'auto', prompt_falcon1801_sys),
+                             ('mistral', '', get_mistral_prompt())
                          ]
                          )
 @wrap_test_forked
-def test_prompt_with_no_context(prompt_type, use_system_prompt, expected):
+def test_prompt_with_no_context(prompt_type, system_prompt, expected):
     prompt_dict = None  # not used unless prompt_type='custom'
     chat = True
     iinput = ''
@@ -298,7 +357,7 @@ def test_prompt_with_no_context(prompt_type, use_system_prompt, expected):
 
     # get prompt
     prompter = Prompter(prompt_type, prompt_dict, debug=debug, chat=chat, stream_output=stream_output,
-                        use_system_prompt=use_system_prompt)
+                        system_prompt=system_prompt)
     # for instruction-tuned models, expect this:
     assert prompter.PreResponse
     assert prompter.PreInstruct
@@ -315,3 +374,26 @@ def test_prompt_with_no_context(prompt_type, use_system_prompt, expected):
 def test_source():
     prompt = "Who are you?%s\nFOO\n%s" % (source_prefix, source_postfix)
     assert prompt.find(source_prefix) >= 0
+
+
+# https://huggingface.co/spaces/tiiuae/falcon-180b-demo/blob/main/app.py
+def falcon180_format_prompt(message, history, system_prompt):
+    prompt = ""
+    if system_prompt:
+        prompt += f"System: {system_prompt}\n"
+    for user_prompt, bot_response in history:
+        prompt += f"User: {user_prompt}\n"
+        prompt += f"Falcon: {bot_response}\n"  # Response already contains "Falcon: "
+    prompt += f"""User: {message}
+Falcon:"""
+    return prompt
+
+
+@wrap_test_forked
+def test_falcon180():
+    prompt = "Who are you?"
+    for system_prompt in ['', "Talk like a Pixie."]:
+        history = [["Who are you?", "I am Falcon, a monster AI model."],
+                   ["What can you do?", "I can do well on leaderboard but not actually 1st."]]
+        formatted_prompt = falcon180_format_prompt(prompt, history, system_prompt)
+        print(formatted_prompt)

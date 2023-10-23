@@ -11,14 +11,39 @@ h2ogpt:
   storage:
     size: 128Gi
     class: ebs-csi
+  
+  externalLLM:
+    enabled: false
+    secret:
+
+    modelLock:
+
+    openAIAzure:
+      enabled: false
+
+    openAI:
+      enabled: False
+
+    replicate: 
+      enabled: false
 
   overrideConfig:
+    base_model: h2oai/h2ogpt-4096-llama2-7b-chat
+    use_safetensors: True
+    prompt_type: llama2
+    save_dir: /workspace/save/
+    use_gpu_id: False
+    score_model: None
+    max_max_new_tokens: 2048
+    max_new_tokens: 1024
 
   service:
     type: NodePort
     webPort: 80
     gptPort: 8888
 
+  updateStrategy:
+    type: RollingUpdate
 
   podSecurityContext:
     runAsNonRoot: true
@@ -38,6 +63,8 @@ h2ogpt:
   resources:
   nodeSelector:
   tolerations:
+
+  env: {}
 
   podAnnotations: {}
   podLabels: {}
@@ -61,8 +88,11 @@ tgi:
   containerArgs:
 
   service:
-    type: NodePort
+    type: ClusterIP
     port: 8080
+
+  updateStrategy:
+    type: RollingUpdate
 
   podSecurityContext:
   securityContext:
@@ -71,10 +101,11 @@ tgi:
   nodeSelector:
   tolerations:
 
+  env: {}
+
   podAnnotations: {}
   podLabels: {}
   autoscaling: {}
-
 
 vllm:
   enabled: false
@@ -84,16 +115,31 @@ vllm:
     repository: gcr.io/vorvan/h2oai/h2ogpt-runtime
     pullPolicy: IfNotPresent
 
+  imagePullSecrets:
+
   storage:
     size: 512Gi
     class: ebs-csi
   
   overrideConfig:
+
   containerArgs:
+    - "--model"
+    - h2oai/h2ogpt-4096-llama2-7b-chat
+    - "--tokenizer"
+    - hf-internal-testing/llama-tokenizer
+    - "--tensor-parallel-size"
+    - 2
+    - "--seed"
+    - 1234
+    - "--trust-remote-code"
 
   service:
-    type: NodePort
+    type: ClusterIP
     port: 5000
+
+  updateStrategy:
+    type: RollingUpdate
 
   podSecurityContext:
     runAsNonRoot: true
@@ -109,8 +155,12 @@ vllm:
         - ALL
     seccompProfile:
 
+  env: {}
+
   resources:
+
   nodeSelector:
+
   tolerations:
 
   podAnnotations: {}

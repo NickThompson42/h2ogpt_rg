@@ -30,7 +30,7 @@ def get_model_tokenizer_gpt4all(base_model, n_jobs=None, max_seq_len=None, llama
                             max_seq_len=max_seq_len,
                             llamacpp_dict=llamacpp_dict,
                             )
-    return model, FakeTokenizer(), 'cpu'
+    return model, FakeTokenizer(model_max_length=max_seq_len), 'cpu'
 
 
 from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
@@ -77,7 +77,7 @@ def get_gpt4all_default_kwargs(max_new_tokens=256,
                                verbose=False,
                                max_seq_len=None,
                                ):
-    if n_jobs is None:
+    if n_jobs in [None, -1]:
         n_jobs = int(os.getenv('OMP_NUM_THREADS', str(os.cpu_count()//2)))
     n_jobs = max(1, min(20, n_jobs))  # hurts beyond some point
     n_gpus = get_ngpus_vis()
@@ -149,6 +149,12 @@ def get_llm_gpt4all(model_name,
         model_kwargs = get_model_kwargs(llamacpp_dict, default_kwargs, cls, exclude_list=['lc_kwargs'])
         model_kwargs.update(dict(model_path=model_path, callbacks=callbacks, streaming=streaming,
                                  prompter=prompter, context=context, iinput=iinput))
+
+        # migration to  new langchain fix:
+        odd_keys = ['model_kwargs', 'grammar_path', 'grammar']
+        for key in odd_keys:
+            model_kwargs.pop(key, None)
+
         llm = cls(**model_kwargs)
         llm.client.verbose = verbose
         inner_model = llm.client
@@ -359,12 +365,8 @@ class H2OLlamaCpp(LlamaCpp):
             for token in self.stream(input=prompt, stop=stop):
                 # for token in self.stream(input=prompt, stop=stop, run_manager=run_manager):
                 text_chunk = token  # ["choices"][0]["text"]
-                # self.stream already calls text_callback
-                # if text_callback:
-                #    text_callback(text_chunk)
                 text += text_chunk
-            # parent handler of streamer expects to see prompt first else output="" and lose if prompt=None in prompter
-            return text[len(prompt):]
+            return text
         else:
             params = self._get_parameters(stop)
             params = {**params, **kwargs}
@@ -378,18 +380,7 @@ class H2OLlamaCpp(LlamaCpp):
             run_manager: Optional[CallbackManagerForLLMRun] = None,
             **kwargs: Any,
         ) -> Iterator[GenerationChunk]:
-        # parent handler of streamer expects to see prompt first else output="" and lose if prompt=None in prompter
-        logprobs = 0
-        chunk = GenerationChunk(
-            text=prompt,
-            generation_info={"logprobs": logprobs},
-        )
-        yield chunk
-        if run_manager:
-            run_manager.on_llm_new_token(
-                token=chunk.text, verbose=self.verbose, log_probs=logprobs
-            )
-        # actual new tokens
+        # parent expects only see actual new tokens, not prompt too
         for chunk in super()._stream(prompt, stop=stop, run_manager=run_manager, **kwargs):
             yield chunk
 

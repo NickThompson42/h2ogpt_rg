@@ -13,7 +13,7 @@ import requests
 from langchain.docstore.document import Document
 from langchain.document_loaders import ImageCaptionLoader
 
-from utils import get_device, NullContext
+from utils import get_device, NullContext, clear_torch_cache
 
 from importlib.metadata import distribution, PackageNotFoundError
 
@@ -35,6 +35,7 @@ class H2OImageCaptionLoader(ImageCaptionLoader):
                  # True doesn't seem to work, even though https://huggingface.co/Salesforce/blip2-flan-t5-xxl#in-8-bit-precision-int8
                  load_half=False,
                  load_gptq='',
+                 load_awq='',
                  load_exllama=False,
                  use_safetensors=False,
                  revision=None,
@@ -55,6 +56,7 @@ class H2OImageCaptionLoader(ImageCaptionLoader):
         self.load_in_8bit = load_in_8bit and have_bitsandbytes  # only for blip2
         self.load_half = load_half
         self.load_gptq = load_gptq
+        self.load_awq = load_awq
         self.load_exllama = load_exllama
         self.use_safetensors = use_safetensors
         self.revision = revision
@@ -71,6 +73,10 @@ class H2OImageCaptionLoader(ImageCaptionLoader):
             if n_gpus > 0:
                 self.context_class = torch.device
                 self.device = 'cuda'
+            else:
+                self.device = 'cpu'
+        else:
+            self.device = 'cpu'
 
     def load_model(self):
         try:
@@ -81,6 +87,10 @@ class H2OImageCaptionLoader(ImageCaptionLoader):
                 "`pip install transformers`."
             )
         self.set_context()
+        if self.model:
+            if not self.load_in_8bit and self.model.device != self.device:
+                self.model.to(self.device)
+            return self
         if self.caption_gpu:
             if self.gpu_id == 'auto':
                 # blip2 has issues with multi-GPU.  Error says need to somehow set language model in device map
@@ -156,6 +166,11 @@ class H2OImageCaptionLoader(ImageCaptionLoader):
 
         return results
 
+    def unload_model(self):
+        if hasattr(self, 'model') and hasattr(self.model, 'cpu'):
+            self.model.cpu()
+            clear_torch_cache()
+
     def _get_captions_and_metadata(
             self, model: Any, processor: Any, path_image: str,
             prompt=None) -> Tuple[str, dict]:
@@ -188,7 +203,7 @@ class H2OImageCaptionLoader(ImageCaptionLoader):
                 with context_class_cast(self.device):
                     if self.load_half:
                         # FIXME: RuntimeError: "slow_conv2d_cpu" not implemented for 'Half'
-                        inputs = processor(image, prompt, return_tensors="pt") #.half()
+                        inputs = processor(image, prompt, return_tensors="pt")  # .half()
                     else:
                         inputs = processor(image, prompt, return_tensors="pt")
                     min_length = len(prompt) // 4 + self.min_new_tokens

@@ -1,3 +1,5 @@
+
+{{- if not .Values.h2ogpt.externalLLM.enabled }}
 {{- if .Values.h2ogpt.enabled }}
 apiVersion: v1
 kind: ConfigMap
@@ -8,7 +10,7 @@ metadata:
     {{- include "h2ogpt.labels" . | nindent 4 }}
 data:
 {{- range $key, $value := .Values.h2ogpt.overrideConfig }}
-  {{ printf "%s" $key | upper }}: {{ $value | quote }}
+  {{ printf "H2OGPT_%s" $key | upper }}: {{ $value | quote }}
 {{- end }}
 {{- end }}
 ---
@@ -37,5 +39,6 @@ metadata:
 data:
 {{- range $key, $value := .Values.vllm.overrideConfig }}
   {{ printf "%s" $key | upper }}: {{ $value | quote }}
+{{- end }}
 {{- end }}
 {{- end }}
