@@ -1,44 +1,129 @@
-out/
+# Backup Files
+*~
+*~*
+
+# Compiled Files
+__pycache__/
+*.bin
+*.bak
+*.lock
+*.deb
+
+# Data Files
+*.csv
+*.pdf
+*.json
+*.pickle
+test_data.json
+todo.txt
+
+# Text and Markdown Files
+*.txt
+build_info.txt
+
+# Python Checkpoints and Cache
+checkpoint**
+*ckpt
+.pytest_cache
+.cache
+
+# Logging and Monitoring
+logs/*.txt
+wandb/
+.neptune/
+.flagged_data_points
+
+# Build and Distribution
+build/
+dist/
+h2ogpt.egg-info/
+prebuilt_deps/
+sources_dir/
+Dockerfile-runner.dockerfile
+Dockerfile_deps
+.idea/
+
+# Environment and Installation
+venv/
+Miniconda3-latest-Linux-x86_64.sh
+.benchmarks
+
+# IDEs and Editors
+.idea/
+.local
+.bash_history
+
+# User-specific Paths
+user_path/
+user_path_test/
+db_dir_UserData/
+temp_path_do_doc1/
+offline_folder/
+users/
+
+# Custom Code and Files
 7B/
 13B/
-__pycache__/
-checkpoint**
 minimal-llama**
 upload.py
 lora-**
-*ckpt
-wandb
 evaluate.py
-test_data.json
-todo.txt
-.neptune/
-*.bin
-db_dir_UserData
-temp_path_do_doc1
-offline_folder
-flagged_data_points
-.pytest_cache
-user_path
-user_path_test
-build
-h2ogpt.egg-info
-dist
-.idea
-.cache
-.local
-.bash_history
-.benchmarks
-Dockerfile-runner.dockerfile
-build_info.txt
-prebuilt_deps
-Dockerfile_deps
 
-# IDEs
-.idea/
-
-# virtual envs
-venv
+# Temporary and Backup
+out/
+*.bak
+*.lock
+*.deb
 
 # Mac one click installer
 Tesseract-OCR/
 poppler/
+
+# Machine Learning Models and Evaluation
+*ckpt
+wandb/
+.neptune/
+flagged_data_points
+
+# Generated Documentation
+temp_path_do_doc1
+
+# Offline Data Processing
+offline_folder
+
+# Sensitive or User-specific Data
+user_path
+user_path_test
+db_dir_UserData
+
+# Build Artifacts
+build
+h2ogpt.egg-info
+dist
+
+# IDE Specific
+.idea/
+
+# Python Virtual Environments
+venv/
+
+# OS Generated Files
+.DS_Store
+Thumbs.db
+
+# Application-specific
+.bash_history
+.cache
+.local
+.benchmarks
+
+# Docker Related
+Dockerfile-runner.dockerfile
+Dockerfile_deps
+
+# Build Information
+build_info.txt
+prebuilt_deps
+
+# Miscellaneous
+flagged_data_points
