@@ -1,8 +1,18 @@
+import abc
 import ast
 import collections
-from typing import Any, Dict, List, Optional, OrderedDict, Union
+from typing import (
+    Any,
+    AsyncGenerator,
+    Dict,
+    Generator,
+    List,
+    Optional,
+    OrderedDict,
+    Union,
+)
 
-from h2ogpt_client import _core
+from h2ogpt_client._gradio_client import GradioClientWrapper
 from h2ogpt_client._h2ogpt_enums import (
     DocumentSubset,
     LangChainAction,
@@ -59,6 +69,7 @@ _H2OGPT_PARAMETERS_TO_CLIENT = collections.OrderedDict(
     docs_ordering_type="docs_ordering_type",
     min_max_new_tokens="min_max_new_tokens",
     max_input_tokens="max_input_tokens",
+    max_total_input_tokens="max_total_input_tokens",
     docs_token_handling="docs_token_handling",
     docs_joiner="docs_joiner",
     hyde_level="hyde_level",
@@ -125,6 +136,7 @@ _DEFAULT_PARAMETERS: Dict[str, Any] = dict(
     docs_ordering_type="reverse_ucurve_sort",
     min_max_new_tokens=256,
     max_input_tokens=-1,
+    max_total_input_tokens=-1,
     docs_token_handling="split_or_merge",
     docs_joiner="\n\n",
     hyde_level=0,
@@ -133,10 +145,64 @@ _DEFAULT_PARAMETERS: Dict[str, Any] = dict(
 )
 
 
+class _Completion(abc.ABC):
+    _API_NAME = "/submit_nochat_api"
+
+    def __init__(self, client: GradioClientWrapper, parameters: OrderedDict[str, Any]):
+        self._client = client
+        self._parameters = dict(parameters)
+
+    def _get_parameters(self, prompt: str) -> Dict[str, Any]:
+        self._parameters["instruction_nochat"] = prompt
+        return self._parameters
+
+    @staticmethod
+    def _get_reply(response: str) -> str:
+        return ast.literal_eval(response)["response"]
+
+    def _predict(self, prompt: str) -> str:
+        response = self._client.predict(
+            str(self._get_parameters(prompt)), api_name=self._API_NAME
+        )
+        return self._get_reply(response)
+
+    def _predict_and_stream(self, prompt: str) -> Generator[str, None, None]:
+        generator = self._client.predict_and_stream(
+            str(self._get_parameters(prompt)), api_name=self._API_NAME
+        )
+        reply_size_so_far = 0
+        for response in generator:
+            current_reply = self._get_reply(response)
+            new_reply_chunk = current_reply[reply_size_so_far:]
+            if not new_reply_chunk:
+                continue
+            reply_size_so_far += len(new_reply_chunk)
+            yield new_reply_chunk
+
+    async def _submit(self, prompt: str) -> str:
+        response = await self._client.submit(
+            str(self._get_parameters(prompt)), api_name=self._API_NAME
+        )
+        return self._get_reply(response)
+
+    async def _submit_and_stream(self, prompt: str) -> AsyncGenerator[str, None]:
+        generator = self._client.submit_and_stream(
+            str(self._get_parameters(prompt)), api_name=self._API_NAME
+        )
+        reply_size_so_far = 0
+        async for response in generator:
+            current_reply = self._get_reply(response)
+            new_reply_chunk = current_reply[reply_size_so_far:]
+            if not new_reply_chunk:
+                continue
+            reply_size_so_far += len(new_reply_chunk)
+            yield new_reply_chunk
+
+
 class TextCompletionCreator:
     """Builder that can create text completions."""
 
-    def __init__(self, client: "_core.Client"):
+    def __init__(self, client: GradioClientWrapper):
         self._client = client
 
     def create(
@@ -164,6 +230,7 @@ class TextCompletionCreator:
         docs_ordering_type: str = "reverse_ucurve_sort",
         min_max_new_tokens: int = 256,
         max_input_tokens: int = -1,
+        max_total_input_tokens: int = -1,
         docs_token_handling: str = "split_or_merge",
         docs_joiner: str = "\n\n",
         hyde_level: int = 0,
@@ -205,6 +272,7 @@ class TextCompletionCreator:
         :param max_input_tokens: Max input tokens to place into model context for each LLM call
                                  -1 means auto, fully fill context for query, and fill by original document chunk for summarization
                                  >=0 means use that to limit context filling to that many tokens
+        :param max_total_input_tokens: like max_input_tokens but instead of per LLM call, applies across all LLM calls for single summarization/extraction action
         :param docs_token_handling: 'chunk' means fill context with top_k_docs (limited by max_input_tokens or model_max_len) chunks for query
                                                                          or top_k_docs original document chunks summarization
                                     None or 'split_or_merge' means same as 'chunk' for query, while for summarization merges documents to fill up to max_input_tokens or model_max_len tokens
@@ -224,57 +292,52 @@ class TextCompletionCreator:
         args["langchain_mode"] = langchain_mode.value  # convert to serializable type
         params = _to_h2ogpt_params({**_DEFAULT_PARAMETERS, **args})
         params["instruction_nochat"] = None  # future prompt
-        params["h2ogpt_key"] = self._client._h2ogpt_key
+        params["h2ogpt_key"] = self._client.h2ogpt_key
         return TextCompletion(self._client, params)
 
 
-class TextCompletion:
+class TextCompletion(_Completion):
     """Text completion."""
 
-    _API_NAME = "/submit_nochat_api"
-
-    def __init__(self, client: "_core.Client", parameters: OrderedDict[str, Any]):
-        self._client = client
-        self._parameters = dict(parameters)
-
-    def _get_parameters(self, prompt: str) -> Dict[str, Any]:
-        self._parameters["instruction_nochat"] = prompt
-        return self._parameters
-
-    @staticmethod
-    def _get_reply(response: str) -> str:
-        return ast.literal_eval(response)["response"]
-
-    async def complete(self, prompt: str) -> str:
+    async def complete(
+        self, prompt: str, enable_streaming: bool = False
+    ) -> Union[str, AsyncGenerator[str, None]]:
         """
         Complete this text completion.
 
         :param prompt: text prompt to generate completion for
+        :param enable_streaming: whether to enable or disable streaming the response
         :return: response from the model
         """
+        if enable_streaming:
+            params = self._get_parameters(prompt)
+            params["stream_output"] = True
+            return self._submit_and_stream(prompt)
+        else:
+            return await self._submit(prompt)
 
-        response = await self._client._predict_async(
-            str(self._get_parameters(prompt)), api_name=self._API_NAME
-        )
-        return self._get_reply(response)
-
-    def complete_sync(self, prompt: str) -> str:
+    def complete_sync(
+        self, prompt: str, enable_streaming: bool = False
+    ) -> Union[str, Generator[str, None, None]]:
         """
         Complete this text completion synchronously.
 
         :param prompt: text prompt to generate completion for
+        :param enable_streaming: whether to enable or disable streaming the response
         :return: response from the model
         """
-        response = self._client._predict(
-            str(self._get_parameters(prompt)), api_name=self._API_NAME
-        )
-        return self._get_reply(response)
+        if enable_streaming:
+            params = self._get_parameters(prompt)
+            params["stream_output"] = True
+            return self._predict_and_stream(prompt)
+        else:
+            return self._predict(prompt)
 
 
 class ChatCompletionCreator:
     """Chat completion."""
 
-    def __init__(self, client: "_core.Client"):
+    def __init__(self, client: GradioClientWrapper):
         self._client = client
 
     def create(
@@ -302,6 +365,7 @@ class ChatCompletionCreator:
         docs_ordering_type: str = "reverse_ucurve_sort",
         min_max_new_tokens: int = 256,
         max_input_tokens: int = -1,
+        max_total_input_tokens: int = -1,
         docs_token_handling: str = "split_or_merge",
         docs_joiner: str = "\n\n",
         hyde_level: int = 0,
@@ -342,6 +406,7 @@ class ChatCompletionCreator:
         :param max_input_tokens: Max input tokens to place into model context for each LLM call
                                  -1 means auto, fully fill context for query, and fill by original document chunk for summarization
                                  >=0 means use that to limit context filling to that many tokens
+        :param max_total_input_tokens: like max_input_tokens but instead of per LLM call, applies across all LLM calls for single summarization/extraction action
         :param docs_token_handling: 'chunk' means fill context with top_k_docs (limited by max_input_tokens or model_max_len) chunks for query
                                                                          or top_k_docs original document chunks summarization
                                     None or 'split_or_merge' means same as 'chunk' for query, while for summarization merges documents to fill up to max_input_tokens or model_max_len tokens
@@ -362,30 +427,16 @@ class ChatCompletionCreator:
         params = _to_h2ogpt_params({**_DEFAULT_PARAMETERS, **args})
         params["instruction_nochat"] = None  # future prompts
         params["add_chat_history_to_context"] = True
-        params["h2ogpt_key"] = self._client._h2ogpt_key
+        params["h2ogpt_key"] = self._client.h2ogpt_key
         params["chat_conversation"] = []  # chat history (FIXME: Only works if 1 model?)
         return ChatCompletion(self._client, params)
 
 
-class ChatCompletion:
+class ChatCompletion(_Completion):
     """Chat completion."""
 
-    _API_NAME = "/submit_nochat_api"
-
-    def __init__(self, client: "_core.Client", parameters: OrderedDict[str, Any]):
-        self._client = client
-        self._parameters = dict(parameters)
-
-    def _get_parameters(self, prompt: str) -> Dict[str, Any]:
-        self._parameters["instruction_nochat"] = prompt
-        return self._parameters
-
-    def _update_history_and_get_reply(
-        self, prompt: str, response: str
-    ) -> Dict[str, str]:
-        reply = ast.literal_eval(response)["response"]
+    def _update_history(self, prompt: str, reply: str) -> None:
         self._parameters["chat_conversation"].append((prompt, reply))
-        return {"user": prompt, "gpt": reply}
 
     async def chat(self, prompt: str) -> Dict[str, str]:
         """
@@ -394,10 +445,9 @@ class ChatCompletion:
         :param prompt: text prompt to generate completions for
         :returns chat reply
         """
-        response = await self._client._predict_async(
-            str(self._get_parameters(prompt)), api_name=self._API_NAME
-        )
-        return self._update_history_and_get_reply(prompt, response)
+        reply = await self._submit(prompt)
+        self._update_history(prompt, reply)
+        return {"user": prompt, "gpt": reply}
 
     def chat_sync(self, prompt: str) -> Dict[str, str]:
         """
@@ -406,10 +456,9 @@ class ChatCompletion:
         :param prompt: text prompt to generate completions for
         :returns chat reply
         """
-        response = self._client._predict(
-            str(self._get_parameters(prompt)), api_name=self._API_NAME
-        )
-        return self._update_history_and_get_reply(prompt, response)
+        reply = self._predict(prompt)
+        self._update_history(prompt, reply)
+        return {"user": prompt, "gpt": reply}
 
     def chat_history(self) -> List[Dict[str, str]]:
         """Returns the full chat history."""
