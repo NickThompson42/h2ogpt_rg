@@ -1959,6 +1959,23 @@ def test_fast_up():
 
 
 @wrap_test_forked
+def test_fast_up_preload():
+    from src.gen import main
+    import torch
+    n_gpus = torch.cuda.device_count() if torch.cuda.is_available else 0
+    if n_gpus == 0:
+        return
+    main(gradio=True, block_gradio_exit=False,
+         pre_load_image_audio_models=True,
+         embedding_gpu_id=n_gpus - 1,
+         caption_gpu_id=max(0, n_gpus - 2),
+         doctr_gpu_id=max(0, n_gpus - 3),
+         asr_gpu_id=max(0, n_gpus - 4),
+         asr_model='openai/whisper-large-v3',
+         )
+
+
+@wrap_test_forked
 def test_fast_up_auth():
     from src.gen import main
     main(gradio=True, block_gradio_exit=False, score_model='', langchain_mode='LLM', auth=[('jonny', 'dude')])
@@ -2105,7 +2122,7 @@ def test_client_chat_stream_langchain_steps3(loaders, enforce_h2ogpt_api_key, en
     if loaders is None:
         loaders = tuple([None, None, None, None])
     else:
-        image_loaders_options0, image_loaders_options, \
+        image_audio_loaders_options0, image_audio_loaders_options, \
             pdf_loaders_options0, pdf_loaders_options, \
             url_loaders_options0, url_loaders_options = \
             lg_to_gr(enable_ocr=True, enable_captions=True, enable_pdf_ocr=True,
@@ -2113,8 +2130,9 @@ def test_client_chat_stream_langchain_steps3(loaders, enforce_h2ogpt_api_key, en
                      use_pymupdf=True,
                      enable_doctr=True,
                      enable_pix2struct=True,
+                     enable_transcriptions=True,
                      max_quality=True)
-        loaders = [image_loaders_options, pdf_loaders_options, url_loaders_options, None]
+        loaders = [image_audio_loaders_options, pdf_loaders_options, url_loaders_options, None]
 
     stream_output = True
     max_new_tokens = 256

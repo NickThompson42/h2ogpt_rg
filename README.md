@@ -4,7 +4,7 @@ Turn ★ into ⭐ (top-right corner) if you like the project!
 
 Query and summarize your documents or just chat with local private GPT LLMs using h2oGPT, an Apache V2 open-source project.
 
-- **Private** offline database of any documents [(PDFs, Excel, Word, Images, Code, Text, MarkDown, etc.)](docs/README_LangChain.md#supported-datatypes)
+- **Private** offline database of any documents [(PDFs, Excel, Word, Images, Youtube, Audio, Code, Text, MarkDown, etc.)](docs/README_LangChain.md#supported-datatypes)
   - **Persistent** database (Chroma, Weaviate, or in-memory FAISS) using accurate embeddings (instructor-large, all-MiniLM-L6-v2, etc.)
   - **Efficient** use of context using instruct-tuned LLMs (no need for LangChain's few-shot approach)
   - **Parallel** summarization and extraction, reaching an output of 80 tokens per second with the 13B LLaMa2 model
@@ -92,6 +92,11 @@ We recommend quantized models for most small-GPU systems, e.g. [LLaMa-2-7B-Chat-
   Download the runnable file and open it from finder, it will take few minutes to unpack and run the application.
   These one-click installers are experimental, report any issues with steps to reproduce at https://github.com/h2oai/h2ogpt/issues.
 
+  **Note:** The app bundle is unsigned, if there are any issues in running the app
+  ```bash
+  $ xattr -dr com.apple.quarantine {file-path}/h2ogpt-osx-m1-gpu
+  $ chmod +x {file-path}/h2ogpt-osx-m1-gpu
+  ```
 * [macOS Manual Install and Run Docs](docs/README_MACOS.md)
 
 ---

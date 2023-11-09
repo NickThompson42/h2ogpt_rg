@@ -1,5 +1,62 @@
 ## Frequently asked questions
 
+### Non-English languages
+
+There are a few changes that may be required for other languages:
+* LLM -- e.g. LLaMa-2-chat
+* Embedding Model -- e.g. instructor-large
+* LLM Prompts -- e.g. `system_prompt`
+* Document Q/A Prompts -- e.g. `pre_prompt_query`
+
+E.g. for Chinese, the LLaMa-2 model is not good, while the `zephyr-7b` type model is reasonable.
+
+E.g. one can do:
+```bash
+python generate.py --cut_distance=10000 --hf_embedding_model=BAAI/bge-base-zh-v1.5 --save_dir=save_china --base_model=HuggingFaceH4/zephyr-7b-beta --model_lock_columns=3 --gradio_size=small --height=400 --score_model=None --pre_prompt_query="注意并记住下面的信息，这将有助于在上下文结束后回答问题或祈使句。" --prompt_query="仅根据上述上下文中提供的文档来源中的信息，" --pre_prompt_summary="为了撰写简洁的单段落或项目符号列表摘要，请注意以下文本\n" --prompt_summary="仅使用上述文档来源中的信息，编写关键结果的简明摘要（最好作为要点）：\n" --system_prompt="你是一个有用的纯中文语言助手，绝对只使用中文。"
+```
+or from Docker:
+```bash
+docker run \
+      --gpus '"device=0"' \
+      --runtime=nvidia \
+      --shm-size=2g \
+      -p 7860:7860 \
+      --rm --init \
+      --network host \
+      -v /etc/passwd:/etc/passwd:ro \
+      -v /etc/group:/etc/group:ro \
+      -u `id -u`:`id -g` \
+      -v "${HOME}"/.cache:/workspace/.cache \
+      -v "${HOME}"/save:/workspace/save \
+      gcr.io/vorvan/h2oai/h2ogpt-runtime:0.1.0 /workspace/generate.py \
+         --base_model=HuggingFaceH4/zephyr-7b-beta \
+         --use_safetensors=True \
+         --prompt_type=zephyr \
+         --save_dir='/workspace/save/' \
+         --use_gpu_id=False \
+         --score_model=None \
+         --max_max_new_tokens=2048 \
+         --max_new_tokens=1024 \
+         --cut_distance=10000 \
+         --hf_embedding_model=BAAI/bge-base-zh-v1.5 \
+         --pre_prompt_query="注意并记住下面的信息，这将有助于在上下文结束后回答问题或祈使句。" \
+         --prompt_query="仅根据上述上下文中提供的文档来源中的信息，" \
+         --pre_prompt_summary="为了撰写简洁的单段落或项目符号列表摘要，请注意以下文本" \
+         --prompt_summary="仅使用上述文档来源中的信息，编写关键结果的简明摘要（最好作为要点" \
+         --system_prompt="你是一个有用的纯中文语言助手，绝对只使用中文。"
+```
+
+Even better [Chinese model](https://huggingface.co/BAAI/AquilaChat2-34B) can be used with `--prompt_type=aquila`, including [with quantization](https://huggingface.co/TheBloke/AquilaChat2-34B-16K-AWQ). that can fit on single A100 40GB.
+
+One can also run such models in vLLM and have h2oGPT use `--inference_server` to connect to the vLLM endpoint for good concurrency, then you can pass also `--concurrency_count=64`.
+
+In some cases LLaMa-2 or other chat models do ok on some languages, but others have been fine-tuned that are probably better:
+* Mistral-based [German](https://huggingface.co/LeoLM/leo-mistral-hessianai-7b-chat) or bilingual LLaMa-2 based [German](https://huggingface.co/LeoLM/leo-hessianai-13b-chat-bilingual)
+* LLaMa-2-7B-based [Spanish](https://huggingface.co/clibrain/Llama-2-7b-ft-instruct-es) or 13B-based [Spanish](https://huggingface.co/marianbasti/Llama-2-13b-fp16-alpaca-spanish)
+
+In some cases more language boosting can be done by adding not just a system prompt but also a `--chat_conversation` that is a list of tuples of strings like `--chat_conversation=[(human, bot),(human, bot)]` (can also be passed to UI in expert panel for exploration of what works best).  Adding some reasonable but generic native language pre convsersation gets the model more into the mood of maintaining that language if it is a multilingual model or one that was heavily English based like LLaMa-2.
+
+
 ### Controlling Quality and Speed of Parsing
 
 h2oGPT has certain defaults for speed and quality, but one may require faster processing or higher quality.
@@ -30,7 +87,11 @@ To enable all options on, choose `--max_quality=True` or select in side panel->U
 
 The value `--top_k_docs` sets how many chunks (for query action) or parts of document (for summarization/extraction actions) to put into context.  If that is too much data, it gets truncated by the `get_limited_prompt()` function.  To improve quality of retrieval, one can set `--top_k_docs=-1` to autofill context with documents.  Or choose a fixed value like `10`, especially if chose redundant parsers that will end up putting similar parts of documents into context.
 
-To improve speed of parsing for captioning images and DocTR for images and PDFs, set `--pre_load_caption_model=True`.  Note `--pre_load_embedding_model=True` is already the default.  This preloads the models, especially useful when using GPUs.  Choose GPU IDs for each model to help distribute the load, e.g. if have 3 GPUs, the embedding model will be on GPU=0, then use `--caption_gpu_id=1` and `--doctr_gpu=2`.  This is also useful for multi-user case, else the models are loaded and unloaded for each user doing parsing, which is wasteful of GPU memory.
+To improve speed of parsing for captioning images and DocTR for images and PDFs, set `--pre_load_image_audio_models=True`.  Note `--pre_load_embedding_model=True` is already the default.  This preloads the models, especially useful when using GPUs.  Choose GPU IDs for each model to help distribute the load, e.g. if have 3 GPUs, the embedding model will be on GPU=0, then use `--caption_gpu_id=1` and `--doctr_gpu_id=2` and `--asr_gpu_id=3`.  This is also useful for multi-user case, else the models are loaded and unloaded for each user doing parsing, which is wasteful of GPU memory.  E.g., for maximum speed and accuracy on 4 GPUs, one could run:
+```bash
+python generate.py --pre_load_embedding_model=True --embedding_gpu_id=0 --hf_embedding_model=BAAI/bge-large-en --cut_distance=10000 --pre_load_caption_model=True --caption_gpu_id=1 --caption_model=Salesforce/blip2-flan-t5-xl --doctr_gpu_id=2 --asr_gpu_id=3 --asr_model=openai/whisper-large-v3 --max_quality=True
+```
+where the BLIP2 model needs 16GB and the whisper-large-v3 needs 10GB.
 
 ### Controlling Quality and Speed of Context-Filling
 
