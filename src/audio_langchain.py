@@ -268,8 +268,7 @@ class H2OAudioCaptionLoader(ImageCaptionLoader):
     def __init__(self, path_audios: Union[str, List[str]] = None,
                  asr_model='openai/whisper-medium',
                  asr_gpu=True,
-                 gpu_id='auto',
-                 from_youtube=False):
+                 gpu_id='auto'):
         super().__init__(path_audios)
         self.audio_paths = path_audios
         self.model = None
@@ -279,13 +278,12 @@ class H2OAudioCaptionLoader(ImageCaptionLoader):
         self.gpu_id = gpu_id if isinstance(gpu_id, int) else 0
         self.device = 'cpu'
         self.device_map = {"": 'cpu'}
-        self.from_youtube = from_youtube
         self.set_context()
 
     def set_context(self):
         if get_device() == 'cuda' and self.asr_gpu:
             import torch
-            n_gpus = torch.cuda.device_count() if torch.cuda.is_available else 0
+            n_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
             if n_gpus > 0:
                 self.context_class = torch.device
                 self.device = 'cuda'
@@ -293,7 +291,7 @@ class H2OAudioCaptionLoader(ImageCaptionLoader):
                 self.device = 'cpu'
         else:
             self.device = 'cpu'
-        if self.asr_gpu:
+        if get_device() == 'cuda' and self.asr_gpu:
             if self.gpu_id == 'auto':
                 # blip2 has issues with multi-GPU.  Error says need to somehow set language model in device map
                 # device_map = 'auto'
@@ -321,7 +319,7 @@ class H2OAudioCaptionLoader(ImageCaptionLoader):
             with self.context_class(self.device):
                 context_class_cast = NullContext if self.device == 'cpu' else torch.autocast
                 with context_class_cast(self.device):
-                    self.model = OpenAIWhisperParserLocal(device='cuda',
+                    self.model = OpenAIWhisperParserLocal(device=self.device,
                                                           device_id=self.gpu_id,
                                                           lang_model=self.asr_model)
         return self
@@ -335,12 +333,12 @@ class H2OAudioCaptionLoader(ImageCaptionLoader):
         else:
             self.audio_paths = path_audios
 
-    def load(self, prompt=None) -> List[Document]:
+    def load(self, from_youtube=False) -> List[Document]:
         if self.model is None:
             self.load_model()
 
         # https://librosa.org/doc/main/generated/librosa.load.html
-        if self.from_youtube:
+        if from_youtube:
             save_dir = "/tmp/" + "_" + str(uuid.uuid4())[:10]
             loader = GenericLoader(YoutubeAudioLoader(self.audio_paths, save_dir), self.model)
             return loader.load()

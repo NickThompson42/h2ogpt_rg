@@ -257,6 +257,7 @@ def main(
         chat_tables: bool = False,
         visible_h2ogpt_header: bool = True,
         visible_all_prompter_models: bool = False,
+        actions_in_sidebar: bool = False,
         enable_add_models_to_list_ui: bool = False,
         max_raw_chunks: int = None,
 
@@ -668,6 +669,7 @@ def main(
     :param chat_tables: Just show Chat as block without tab (useful if want only chat view)
     :param visible_h2ogpt_header: Whether github stars, URL, logo, and QR code are visible
     :param visible_all_prompter_models: Whether to show all prompt_type_to_model_name items or just curated ones
+    :param actions_in_sidebar: Whether to show sidebar with actions in old style
     :param enable_add_models_to_list_ui: Whether to show add model, lora, server to dropdown list
            Disabled by default since clutters Models tab in UI, and can just add custom item directly in dropdown
     :param max_raw_chunks: Maximum number of chunks to show in UI when asking for raw DB text from documents/collection
@@ -1930,6 +1932,9 @@ def get_model(
     llama_type = llama_type_from_config or llama_type_from_name
     if "xgen" in base_model.lower() or 'llama2' in base_model.lower() or 'llama-2' in base_model.lower():
         llama_type = False
+    if os.getenv("listen_llama") is None:
+        # only old models need this, avoid unless override with ENV
+        llama_type = False
     if llama_type:
         if verbose:
             print("Detected as llama type from"
@@ -2198,7 +2203,7 @@ def get_hf_model(load_8bit: bool = False,
 
         n_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
         n_gpus, gpu_ids = cuda_vis_check(n_gpus)
-        if n_gpus != 0 and not (load_gptq and not use_autogptq):
+        if n_gpus != 0 and not load_gptq:
             if low_bit_mode == 1:
                 from transformers import BitsAndBytesConfig
                 model_kwargs['quantization_config'] = BitsAndBytesConfig(bnb_4bit_compute_dtype=torch.bfloat16,

@@ -20,6 +20,7 @@ import typing
 import urllib.error
 import uuid
 import zipfile
+import tarfile
 from collections import defaultdict
 from datetime import datetime
 from functools import reduce
@@ -53,7 +54,7 @@ from utils import wrapped_partial, EThread, import_matplotlib, sanitize_filename
     have_libreoffice, have_arxiv, have_playwright, have_selenium, have_tesseract, have_doctr, have_pymupdf, set_openai, \
     get_list_or_str, have_pillow, only_selenium, only_playwright, only_unstructured_urls, get_short_name, \
     get_accordion, have_jq, get_doc, get_source, have_chromamigdb, get_token_count, reverse_ucurve_list, get_size, \
-    get_test_name_core, download_simple, get_ngpus_vis, have_librosa
+    get_test_name_core, download_simple, get_ngpus_vis, have_librosa, return_good_url
 from enums import DocumentSubset, no_lora_str, model_token_mapping, source_prefix, source_postfix, non_query_commands, \
     LangChainAction, LangChainMode, DocumentChoice, LangChainTypes, font_size, head_acc, super_source_prefix, \
     super_source_postfix, langchain_modes_intrinsic, get_langchain_prompts, LangChainAgent, docs_joiner_default, \
@@ -423,7 +424,11 @@ def get_embedding(use_openai_embedding, hf_embedding_model=None, preload=False, 
             embedding = HuggingFaceEmbeddings(model_name=hf_embedding_model, model_kwargs=model_kwargs)
         if gpu_id == 'auto':
             gpu_id = 0
-        if preload and isinstance(gpu_id, int) and gpu_id >= 0 and hasattr(embedding.client, 'to'):
+        if preload and \
+                isinstance(gpu_id, int) and \
+                gpu_id >= 0 and \
+                hasattr(embedding.client, 'to') and \
+                get_device() == 'cuda':
             embedding.client = embedding.client.to('cuda:%d' % gpu_id)
         embedding.client.preload = preload
     return embedding
@@ -1779,7 +1784,7 @@ def get_llm(use_openai_model=False,
 def get_device_dtype():
     # torch.device("cuda") leads to cuda:x cuda:y mismatches for multi-GPU consistently
     import torch
-    n_gpus = torch.cuda.device_count() if torch.cuda.is_available else 0
+    n_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
     device = 'cpu' if n_gpus == 0 else 'cuda'
     # from utils import NullContext
     # context_class = NullContext if n_gpus > 1 or n_gpus == 0 else context_class
@@ -2061,6 +2066,42 @@ def file_to_doc(file,
                 is_public=False,
                 from_ui=True,
                 ):
+    # SOME AUTODETECTION LOGIC FOR URL VS TEXT
+
+    file_stripped = file.strip()  # in case accidental spaces in front or at end
+    if file_stripped == '':
+        raise ValueError("Refusing to accept empty data")
+    file_lower = file_stripped.lower()
+    case1_arxiv = file_lower.startswith('arxiv:') and len(file_lower.split('arxiv:')) == 2
+    case2_arxiv = file_lower.startswith('https://arxiv.org/abs') and len(file_lower.split('https://arxiv.org/abs')) == 2
+    case3_arxiv = file_lower.startswith('http://arxiv.org/abs') and len(file_lower.split('http://arxiv.org/abs')) == 2
+    case4_arxiv = file_lower.startswith('arxiv.org/abs/') and len(file_lower.split('arxiv.org/abs/')) == 2
+
+    case1_youtube = file_lower.startswith('https://www.youtube.com/watch?v=') and len(
+        file_lower.split('https://www.youtube.com/watch?v=')) == 2
+    case2_youtube = file_lower.startswith('http://www.youtube.com/watch?v=') and len(
+        file_lower.split('http://www.youtube.com/watch?v=')) == 2
+    case3_youtube = file_lower.startswith('www.youtube.com/watch?v=') and len(
+        file_lower.split('www.youtube.com/watch?v=')) == 2
+    case4_youtube = file_lower.startswith('youtube.com/watch?v=') and len(
+        file_lower.split('youtube.com/watch?v=')) == 2
+
+    if is_url and is_txt:
+        # decide which
+        if ' ' in file_stripped:
+            # can't have literal space in URL
+            is_url = False
+        elif case1_arxiv or case2_arxiv or case3_arxiv or case4_arxiv or \
+                case1_youtube or case2_youtube or case3_youtube or case4_youtube:
+            # force
+            is_txt = False
+        else:
+            file_test = return_good_url(file_stripped)
+            if file_test is None:
+                is_url = False
+            else:
+                is_txt = False
+
     assert isinstance(model_loaders, dict)
     if selected_file_types is not None:
         set_image_audio_types1 = set_image_types.intersection(set(selected_file_types))
@@ -2146,30 +2187,14 @@ def file_to_doc(file,
             file = source_file
 
     if is_url:
-        file = file.strip()  # in case accidental spaces in front or at end
-        file_lower = file.lower()
-        case1 = file_lower.startswith('arxiv:') and len(file_lower.split('arxiv:')) == 2
-        case2 = file_lower.startswith('https://arxiv.org/abs') and len(file_lower.split('https://arxiv.org/abs')) == 2
-        case3 = file_lower.startswith('http://arxiv.org/abs') and len(file_lower.split('http://arxiv.org/abs')) == 2
-        case4 = file_lower.startswith('arxiv.org/abs/') and len(file_lower.split('arxiv.org/abs/')) == 2
-
-        case_youtube1 = file_lower.startswith('https://www.youtube.com/watch?v=') and len(
-            file_lower.split('https://www.youtube.com/watch?v=')) == 2
-        case_youtube2 = file_lower.startswith('http://www.youtube.com/watch?v=') and len(
-            file_lower.split('http://www.youtube.com/watch?v=')) == 2
-        case_youtube3 = file_lower.startswith('www.youtube.com/watch?v=') and len(
-            file_lower.split('www.youtube.com/watch?v=')) == 2
-        case_youtube4 = file_lower.startswith('youtube.com/watch?v=') and len(
-            file_lower.split('youtube.com/watch?v=')) == 2
-
-        if case1 or case2 or case3 or case4:
-            if case1:
+        if case1_arxiv or case2_arxiv or case3_arxiv or case4_arxiv:
+            if case1_arxiv:
                 query = file.lower().split('arxiv:')[1].strip()
-            elif case2:
+            elif case2_arxiv:
                 query = file.lower().split('https://arxiv.org/abs/')[1].strip()
-            elif case2:
+            elif case2_arxiv:
                 query = file.lower().split('http://arxiv.org/abs/')[1].strip()
-            elif case3:
+            elif case3_arxiv:
                 query = file.lower().split('arxiv.org/abs/')[1].strip()
             else:
                 raise RuntimeError("Unexpected arxiv error for %s" % file)
@@ -2193,7 +2218,7 @@ def file_to_doc(file,
                     docs1]
             else:
                 docs1 = []
-        elif (case_youtube1 or case_youtube2 or case_youtube3 or case_youtube4) and enable_transcriptions:
+        elif (case1_youtube or case2_youtube or case3_youtube or case4_youtube) and enable_transcriptions:
             docs1 = []
             if model_loaders['asr'] is not None and not isinstance(model_loaders['asr'], (str, bool)):
                 # assumes didn't fork into this process with joblib, else can deadlock
@@ -2207,10 +2232,9 @@ def file_to_doc(file,
                 model_loaders['asr'] = H2OAudioCaptionLoader(asr_model=asr_model,
                                                              asr_gpu=model_loaders['asr'] == 'gpu',
                                                              gpu_id=asr_gpu_id,
-                                                             from_youtube=True,
                                                              )
             model_loaders['asr'].set_audio_paths([file])
-            docs1c = model_loaders['asr'].load()
+            docs1c = model_loaders['asr'].load(from_youtube=True)
             docs1c = [x for x in docs1c if x.page_content]
             add_meta(docs1c, file, parser='H2OAudioCaptionLoader: %s' % asr_model)
             # caption didn't set source, so fix-up meta
@@ -2231,8 +2255,8 @@ def file_to_doc(file,
             if only_unstructured_urls or only_playwright:
                 do_selenium = False
             if do_unstructured or use_unstructured:
-                docs1a = UnstructuredURLLoader(urls=[file]).load()
-                docs1a = [x for x in docs1a if x.page_content]
+                docs1a = UnstructuredURLLoader(urls=[file], headers=dict(ssl_verify="False")).load()
+                docs1a = [x for x in docs1a if x.page_content and x.page_content != '403 Forbidden']
                 add_parser(docs1a, 'UnstructuredURLLoader')
                 docs1.extend(docs1a)
             if len(docs1) == 0 and have_playwright or do_playwright:
@@ -2240,7 +2264,7 @@ def file_to_doc(file,
                 from langchain.document_loaders import PlaywrightURLLoader
                 docs1a = asyncio.run(PlaywrightURLLoader(urls=[file]).aload())
                 # docs1 = PlaywrightURLLoader(urls=[file]).load()
-                docs1a = [x for x in docs1a if x.page_content]
+                docs1a = [x for x in docs1a if x.page_content and x.page_content != '403 Forbidden']
                 add_parser(docs1a, 'PlaywrightURLLoader')
                 docs1.extend(docs1a)
             if len(docs1) == 0 and have_selenium or do_selenium:
@@ -2251,7 +2275,7 @@ def file_to_doc(file,
                 from selenium.common.exceptions import WebDriverException
                 try:
                     docs1a = SeleniumURLLoader(urls=[file]).load()
-                    docs1a = [x for x in docs1a if x.page_content]
+                    docs1a = [x for x in docs1a if x.page_content and x.page_content != '403 Forbidden']
                     add_parser(docs1a, 'SeleniumURLLoader')
                     docs1.extend(docs1a)
                 except WebDriverException as e:
@@ -2332,10 +2356,9 @@ def file_to_doc(file,
             model_loaders['asr'] = H2OAudioCaptionLoader(asr_model=asr_model,
                                                          asr_gpu=model_loaders['asr'] == 'gpu',
                                                          gpu_id=asr_gpu_id,
-                                                         from_youtube=False,
                                                          )
         model_loaders['asr'].set_audio_paths([file])
-        docs1c = model_loaders['asr'].load()
+        docs1c = model_loaders['asr'].load(from_youtube=False)
         docs1c = [x for x in docs1c if x.page_content]
         add_meta(docs1c, file, parser='H2OAudioCaptionLoader: %s' % asr_model)
         # caption didn't set source, so fix-up meta
@@ -2698,6 +2721,13 @@ def file_to_doc(file,
             zip_ref.extractall(base_path)
             # recurse
             doc1 = path_to_docs_func(base_path)
+    elif file.lower().endswith('.tar.gz') or file.lower().endswith('.tgz'):
+        with tarfile.open(file, 'r') as tar_ref:
+            # don't put into temporary path, since want to keep references to docs inside tar.gz
+            # so just extract in path where
+            tar_ref.extractall(base_path)
+            # recurse
+            doc1 = path_to_docs_func(base_path)
     elif file.lower().endswith('.gz') or file.lower().endswith('.gzip'):
         if file.lower().endswith('.gz'):
             de_file = file.lower().replace('.gz', '')
@@ -2818,7 +2848,9 @@ def path_to_doc1(file,
                  ):
     assert db_type is not None
     if verbose:
-        if is_url:
+        if is_url and is_txt:
+            print("Ingesting URL or Text: %s" % file, flush=True)
+        elif is_url:
             print("Ingesting URL: %s" % file, flush=True)
         elif is_txt:
             print("Ingesting Text: %s" % file, flush=True)
@@ -2877,7 +2909,9 @@ def path_to_doc1(file,
                           "traceback": traceback.format_exc()})
             res = [exception_doc]
     if verbose:
-        if is_url:
+        if is_url and is_txt:
+            print("DONE Ingesting URL or Text: %s" % file, flush=True)
+        elif is_url:
             print("DONE Ingesting URL: %s" % file, flush=True)
         elif is_txt:
             print("DONE Ingesting Text: %s" % file, flush=True)
@@ -2952,6 +2986,7 @@ def path_to_docs(path_or_paths, verbose=False, fail_any_exception=False, n_jobs=
     if not path_or_paths and not url and not text:
         return []
     elif url:
+        # ok if text too
         url = get_list_or_str(url)
         globs_non_image_types = url if isinstance(url, (list, tuple, types.GeneratorType)) else [url]
     elif text:
@@ -2983,7 +3018,8 @@ def path_to_docs(path_or_paths, verbose=False, fail_any_exception=False, n_jobs=
         # globs_non_image_types = flatten_list([[x for x in path_or_paths if x.endswith(y)] for y in non_image_audio_types1])
         # But instead, allow fail so can collect unsupported too
         set_globs_image_audio_types = set(globs_image_audio_types)
-        globs_non_image_types.extend([os.path.normpath(x) for x in path_or_paths if x not in set_globs_image_audio_types])
+        globs_non_image_types.extend(
+            [os.path.normpath(x) for x in path_or_paths if x not in set_globs_image_audio_types])
 
     # filter out any files to skip (e.g. if already processed them)
     # this is easy, but too aggressive in case a file changed, so parent probably passed existing_files=[]
@@ -3340,7 +3376,8 @@ def get_existing_db(db, persist_directory,
             got_embedding, use_openai_embedding0, hf_embedding_model0 = load_embed(persist_directory=persist_directory)
             if got_embedding:
                 use_openai_embedding, hf_embedding_model = use_openai_embedding0, hf_embedding_model0
-            embedding = get_embedding(use_openai_embedding, hf_embedding_model=hf_embedding_model, gpu_id=embedding_gpu_id)
+            embedding = get_embedding(use_openai_embedding, hf_embedding_model=hf_embedding_model,
+                                      gpu_id=embedding_gpu_id)
             import logging
             logging.getLogger("chromadb").setLevel(logging.ERROR)
             if use_chromamigdb:
@@ -6228,7 +6265,7 @@ def _update_user_db(file,
 
     # expect string comparison, if dict then model object with name and get name not dict or model
     hf_embedding_model_str = get_hf_embedding_model_name(hf_embedding_model)
-    if is_txt and hf_embedding_model_str == 'fake':
+    if not is_url and is_txt and hf_embedding_model_str == 'fake':
         # avoid parallel if fake embedding since assume trivial ingestion
         n_jobs = 1
 

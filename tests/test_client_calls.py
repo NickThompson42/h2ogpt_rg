@@ -1962,7 +1962,7 @@ def test_fast_up():
 def test_fast_up_preload():
     from src.gen import main
     import torch
-    n_gpus = torch.cuda.device_count() if torch.cuda.is_available else 0
+    n_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
     if n_gpus == 0:
         return
     main(gradio=True, block_gradio_exit=False,
@@ -2537,7 +2537,7 @@ def test_client_load_unload_models(model_choice):
     # model_state
     prompt_type = ''
     model_load8bit_checkbox = False
-    model_load4bit_checkbox = True
+    model_load4bit_checkbox = 'AWQ' not in model_choice and 'GGUF' not in model_choice and 'GPTQ' not in model_choice
     model_low_bit_mode = 1
     model_load_gptq = ''
     model_load_awq = ''
