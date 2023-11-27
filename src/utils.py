@@ -274,13 +274,13 @@ def _tar_data(root_dirs=None, tar_file=None, base_dir='./'):
 
 
 def save_generate_output(prompt=None, output=None, base_model=None, save_dir=None, where_from='unknown where from',
-                         extra_dict={}, error='', extra='', which_api='', valid_key=None,
+                         extra_dict={}, error='', sources=[], which_api='', valid_key=None,
                          h2ogpt_key='', return_dict=False):
     if not save_dir:
         return
     try:
         return _save_generate_output(prompt=prompt, output=output, base_model=base_model, save_dir=save_dir,
-                                     where_from=where_from, extra_dict=extra_dict, error=error, extra=extra,
+                                     where_from=where_from, extra_dict=extra_dict, error=error, sources=sources,
                                      which_api=which_api, valid_key=valid_key, h2ogpt_key=h2ogpt_key,
                                      return_dict=return_dict)
     except Exception as e:
@@ -289,7 +289,7 @@ def save_generate_output(prompt=None, output=None, base_model=None, save_dir=Non
 
 
 def _save_generate_output(prompt=None, output=None, base_model=None, save_dir=None, where_from='unknown where from',
-                          extra_dict={}, error='', extra='', which_api='',
+                          extra_dict={}, error='', sources=[], which_api='',
                           valid_key=None, h2ogpt_key='',
                           return_dict=False):
     """
@@ -310,7 +310,7 @@ def _save_generate_output(prompt=None, output=None, base_model=None, save_dir=No
                         base_model=base_model,
                         where_from=where_from,
                         error=error,
-                        extra=extra,
+                        sources=sources,
                         which_api=which_api,
                         valid_key=valid_key,
                         h2ogpt_key=h2ogpt_key,
@@ -1228,6 +1228,42 @@ try:
     have_librosa = True
 except (PackageNotFoundError, AssertionError):
     have_librosa = False
+
+try:
+    assert distribution('wavio') is not None
+    have_wavio = True
+except (PackageNotFoundError, AssertionError):
+    have_wavio = False
+
+try:
+    assert distribution('soundfile') is not None
+    have_soundfile = True
+except (PackageNotFoundError, AssertionError):
+    have_soundfile = False
+
+try:
+    assert distribution('deepspeed') is not None
+    have_deepspeed = True
+except (PackageNotFoundError, AssertionError):
+    have_deepspeed = False
+
+try:
+    assert distribution('emoji') is not None
+    have_emoji = True
+except (PackageNotFoundError, AssertionError):
+    have_emoji = False
+
+try:
+    assert distribution('langid') is not None
+    have_langid = True
+except (PackageNotFoundError, AssertionError):
+    have_langid = False
+
+try:
+    assert distribution('TTS') is not None
+    have_TTS = True
+except (PackageNotFoundError, AssertionError):
+    have_TTS = False
 
 only_unstructured_urls = os.environ.get("ONLY_UNSTRUCTURED_URLS", "0") == "1"
 only_selenium = os.environ.get("ONLY_SELENIUM", "0") == "1"

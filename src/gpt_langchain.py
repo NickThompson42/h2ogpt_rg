@@ -3115,6 +3115,10 @@ def path_to_docs(path_or_paths, verbose=False, fail_any_exception=False, n_jobs=
                 "Public instance only allows up to %d documents "
                 "(including in zip) (%d for API) updated at a time." % (max_docs_public, max_docs_public_api))
 
+    def no_tqdm(x):
+        return x
+    my_tqdm = no_tqdm if not verbose else tqdm
+
     if n_jobs != 1 and len(globs_non_image_types) > 1:
         # avoid nesting, e.g. upload 1 zip and then inside many files
         # harder to handle if upload many zips with many files, inner parallel one will be disabled by joblib
@@ -3123,7 +3127,7 @@ def path_to_docs(path_or_paths, verbose=False, fail_any_exception=False, n_jobs=
         )
     else:
         documents = [path_to_doc1(file, filei=filei, **kwargs) for filei, file in
-                     enumerate(tqdm(globs_non_image_types))]
+                     enumerate(my_tqdm(globs_non_image_types))]
 
     # do images separately since can't fork after cuda in parent, so can't be parallel
     if n_jobs_image != 1 and len(globs_image_audio_types) > 1:
@@ -3134,7 +3138,7 @@ def path_to_docs(path_or_paths, verbose=False, fail_any_exception=False, n_jobs=
         )
     else:
         image_documents = [path_to_doc1(file, filei=filei, **kwargs) for filei, file in
-                           enumerate(tqdm(globs_image_audio_types))]
+                           enumerate(my_tqdm(globs_image_audio_types))]
 
     # unload loaders (image loaders, includes enable_pdf_doctr that uses same loader)
     for name, loader in model_loaders.items():
@@ -3761,7 +3765,8 @@ def _make_db(use_openai_embedding=False,
             raise RuntimeError("Expected no new files! %s" % langchain_mode)
         if len(sources) == 0 and os.getenv('SHOULD_NEW_FILES') is not None:
             raise RuntimeError("Expected new files! %s" % langchain_mode)
-        print("Loaded %s sources for potentially adding to %s" % (len(sources), langchain_mode), flush=True)
+        if verbose:
+            print("Loaded %s sources for potentially adding to %s" % (len(sources), langchain_mode), flush=True)
 
         # see if got sources
         if not sources:
@@ -4365,7 +4370,7 @@ Respond to prompt of Final Answer with your final well-structured%s answer to th
         formatted_doc_chunks = '\n\n'.join([get_url(x) + '\n\n' + x.page_content for x in docs])
         if not formatted_doc_chunks and not use_llm_if_no_docs:
             yield dict(prompt=prompt_basic, response="No sources", sources='', num_prompt_tokens=0,
-                       llm_answers=llm_answers)
+                       llm_answers=llm_answers, response_no_refs='')
             return
         # if no sources, outside gpt_langchain, LLM will be used with '' input
         scores = [1] * len(docs)
@@ -4376,14 +4381,15 @@ Respond to prompt of Final Answer with your final well-structured%s answer to th
                                       count_input_tokens=0,
                                       count_output_tokens=0,
                                       ))
-        ret, extra = get_sources_answer(*get_answer_args, **get_answer_kwargs)
-        yield dict(prompt=prompt_basic, response=formatted_doc_chunks, sources=extra, num_prompt_tokens=0,
-                   llm_answers=llm_answers)
+        ret, sources, ret_no_refs = get_sources_answer(*get_answer_args, **get_answer_kwargs)
+        yield dict(prompt=prompt_basic, response=formatted_doc_chunks, sources=sources, num_prompt_tokens=0,
+                   llm_answers=llm_answers, response_no_refs='')
         return
     if langchain_agents and not chain:
         ret = '%s not supported by this model' % langchain_agents[0]
-        extra = ''
-        yield dict(prompt=prompt_basic, response=ret, sources=extra, num_prompt_tokens=0, llm_answers=llm_answers)
+        sources = []
+        yield dict(prompt=prompt_basic, response=ret, sources=sources, num_prompt_tokens=0, llm_answers=llm_answers,
+                   response_no_refs=ret)
         return
     if langchain_mode not in langchain_modes_non_db and not docs:
         if langchain_action in [LangChainAction.SUMMARIZE_MAP.value,
@@ -4398,8 +4404,9 @@ Respond to prompt of Final Answer with your final well-structured%s answer to th
             # if here then ok to continue using chain if exists.  E.g. use_llm_if_no_docs=True and doing query langchain_action
             ret = None
         if ret is not None:
-            extra = ''
-            yield dict(prompt=prompt_basic, response=ret, sources=extra, num_prompt_tokens=0, llm_answers=llm_answers)
+            sources = []
+            yield dict(prompt=prompt_basic, response=ret, sources=sources, num_prompt_tokens=0, llm_answers=llm_answers,
+                       response_no_refs=ret)
             return
 
     # NOTE: If chain=None, could return if HF type (i.e. not langchain_only_model), but makes code too complex
@@ -4436,20 +4443,20 @@ Respond to prompt of Final Answer with your final well-structured%s answer to th
 
     if len(docs) == 0:
         # if no docs, then no sources to cite
-        ret, extra = answer, ''
+        ret, sources = answer, []
         # doesn't actually have docs, but name means got to end with that answer
         llm_answers['llm_answer_final'] = ret
         if verbose:
             print('response: %s' % ret)
-        yield dict(prompt=prompt, response=ret, sources=extra, num_prompt_tokens=num_prompt_tokens,
-                   llm_answers=llm_answers)
+        yield dict(prompt=prompt, response=ret, sources=sources, num_prompt_tokens=num_prompt_tokens,
+                   llm_answers=llm_answers, response_no_refs=ret)
     elif answer is not None:
-        ret, extra = get_sources_answer(*get_answer_args, **get_answer_kwargs)
+        ret, sources, ret_no_refs = get_sources_answer(*get_answer_args, **get_answer_kwargs)
         llm_answers['llm_answer_final'] = ret
         if verbose:
             print('response: %s' % ret)
-        yield dict(prompt=prompt, response=ret, sources=extra, num_prompt_tokens=num_prompt_tokens,
-                   llm_answers=llm_answers)
+        yield dict(prompt=prompt, response=ret, sources=sources, num_prompt_tokens=num_prompt_tokens,
+                   llm_answers=llm_answers, response_no_refs=ret_no_refs)
     return
 
 
@@ -4488,7 +4495,8 @@ def run_target(query='',
                 thread.start()
                 outputs = ""
                 output1_old = ''
-                res_dict = dict(prompt=query, response='', sources='', num_prompt_tokens=0, llm_answers=llm_answers)
+                res_dict = dict(prompt=query, response='', sources='', num_prompt_tokens=0, llm_answers=llm_answers,
+                                response_no_refs='')
                 try:
                     tgen0 = time.time()
                     for new_text in streamer:
@@ -4518,7 +4526,7 @@ def run_target(query='',
                         # in-place change to this key so exposed outside this generator
                         llm_answers[llm_answers_key] = output1
                         res_dict = dict(prompt=query, response=output1, sources='', num_prompt_tokens=0,
-                                        llm_answers=llm_answers)
+                                        llm_answers=llm_answers, response_no_refs=output1)
                         if output1 != output1_old:
                             yield res_dict
                             output1_old = output1
@@ -4803,7 +4811,7 @@ def run_hyde(*args, **kwargs):
     hyde_chain['query'] = hyde_template.format(query=query)
     hyde_chain['db'] = None
     hyde_chain['text_context_list'] = []
-    extra = []
+    sources = []
     answers = []
 
     for hyde_level1 in range(hyde_level):
@@ -4832,9 +4840,12 @@ def run_hyde(*args, **kwargs):
                                    llm_answers_key=llm_answers_key,
                                    async_output=async_output,
                                    only_new_text=only_new_text):
-            yield dict(prompt=ret['prompt'], response=response_prefix + ret['response'], sources=ret['sources'],
+            response = response_prefix + ret['response']
+            yield dict(prompt=ret['prompt'], response=response, sources=ret['sources'],
                        num_prompt_tokens=ret['num_prompt_tokens'],
-                       llm_answers=ret['llm_answers'])
+                       llm_answers=ret['llm_answers'],
+                       # only give back no_refs if final
+                       response_no_refs='' if hyde_level1 < hyde_level else response)
             answer = ret['response']
 
         if answer:
@@ -4844,15 +4855,15 @@ def run_hyde(*args, **kwargs):
                                      scores, show_rank,
                                      answer_with_sources,
                                      append_sources_to_answer])
-            ret, extra = get_sources_answer(*get_answer_args, **get_answer_kwargs)
+            ret, sources, ret_no_refs = get_sources_answer(*get_answer_args, **get_answer_kwargs)
             # FIXME: Something odd, UI gets stuck and no more yields if pass these sources inside ret
             # https://github.com/gradio-app/gradio/issues/6100
             # print("ret: %s" % ret)
-            # yield dict(prompt=prompt_basic, response=ret, sources=extra, num_prompt_tokens=0, llm_answers=llm_answers)
+            # yield dict(prompt=prompt_basic, response=ret, sources=sources, num_prompt_tokens=0, llm_answers=llm_answers)
             # try yield after
             # print("answer: %s" % answer)
-            yield dict(prompt=prompt_basic, response=answer, sources=extra, num_prompt_tokens=0,
-                       llm_answers=llm_answers)
+            yield dict(prompt=prompt_basic, response=answer, sources=sources, num_prompt_tokens=0,
+                       llm_answers=llm_answers, response_no_refs=ret_no_refs)
 
             # update embedding query
             # use all answers, but use newer answers first, often shorter due to LLM RLHF not used to long docs inputted,
@@ -4993,7 +5004,6 @@ def get_chain(query=None,
     target = None
     scores = []
     num_docs_before_cut = 0
-    use_llm_if_no_docs = True
 
     if len(text_context_list) > 0:
         # turn into documents to make easy to manage and add meta
@@ -5882,20 +5892,20 @@ def get_sources_answer(query, docs, answer, scores, show_rank,
         print("answer: %s" % answer, flush=True)
 
     if len(docs) == 0:
-        extra = ''
-        ret = answer + extra
-        return ret, extra
+        sources = []
+        ret = answer
+        return ret, sources, answer
 
+    sources = [dict(score=score, content=get_doc(x), source=get_source(x), orig_index=x.metadata.get('orig_index', 0))
+               for score, x in zip(scores, docs)][
+              :top_k_docs_max_show]
     if answer_with_sources == -1:
-        extra = [dict(score=score, content=get_doc(x), source=get_source(x), orig_index=x.metadata.get('orig_index', 0))
-                 for score, x in zip(scores, docs)][
-                :top_k_docs_max_show]
         if append_sources_to_answer:
-            extra_str = [str(x) for x in extra]
-            ret = answer + '\n\n' + '\n'.join(extra_str)
+            sources_str = [str(x) for x in sources]
+            ret = answer + '\n\n' + '\n'.join(sources_str)
         else:
             ret = answer
-        return ret, extra
+        return ret, sources, answer
 
     # link
     answer_sources = [(max(0.0, 1.5 - score) / 1.5,
@@ -5954,15 +5964,16 @@ def get_sources_answer(query, docs, answer, scores, show_rank,
     if isinstance(answer, str) and not answer.endswith('\n'):
         answer += '\n'
 
+    answer_no_refs = answer
     if answer_with_sources:
-        extra = '\n' + sorted_sources_urls
+        sources_str = '\n' + sorted_sources_urls
     else:
-        extra = ''
+        sources_str = ''
     if isinstance(answer, str) and append_sources_to_answer:
-        ret = answer + extra
+        ret = answer + sources_str
     else:
         ret = answer
-    return ret, extra
+    return ret, sources, answer_no_refs
 
 
 def get_any_db(db1s, langchain_mode, langchain_mode_paths, langchain_mode_types,
