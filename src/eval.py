@@ -12,20 +12,28 @@ from utils import clear_torch_cache, NullContext, get_kwargs, makedirs
 
 
 def run_eval(  # for local function:
-        base_model=None, lora_weights=None, inference_server=None,
+        base_model=None, lora_weights=None, inference_server=None, regenerate_clients=None,
         prompt_type=None, prompt_dict=None, system_prompt=None,
         debug=None, chat=False,
         stream_output=None, async_output=None, num_async=None,
         eval_filename=None, eval_prompts_only_num=None, eval_prompts_only_seed=None, eval_as_output=None,
         examples=None, memory_restriction_level=None,
         # for get_model:
-        score_model=None, load_8bit=None, load_4bit=None, low_bit_mode=None, load_half=None,
+        score_model=None, load_8bit=None, load_4bit=None, low_bit_mode=None, load_half=None, use_flash_attention_2=None,
         load_gptq=None, use_autogptq=None, load_awq=None, load_exllama=None, use_safetensors=None, revision=None,
         use_gpu_id=None, tokenizer_base_model=None,
         gpu_id=None, n_jobs=None, n_gpus=None, local_files_only=None, resume_download=None, use_auth_token=None,
         trust_remote_code=None, offload_folder=None, rope_scaling=None, max_seq_len=None, compile_model=None,
-        llamacpp_dict=None, exllama_dict=None, gptq_dict=None, attention_sinks=None, sink_dict=None, hf_model_dict=None,
+        llamacpp_dict=None, llamacpp_path=None,
+        exllama_dict=None, gptq_dict=None, attention_sinks=None, sink_dict=None, hf_model_dict=None,
         truncation_generation=None,
+        use_pymupdf=None,
+        use_unstructured_pdf=None,
+        use_pypdf=None,
+        enable_pdf_ocr=None,
+        enable_pdf_doctr=None,
+        enable_imagegen_high_sd=None,
+        try_pdf_as_html=None,
         # for evaluate args beyond what's already above, or things that are always dynamic and locally created
         temperature=None,
         top_p=None,
@@ -47,12 +55,17 @@ def run_eval(  # for local function:
         chunk_size=None,
         document_subset=None,
         document_choice=None,
+        document_source_substrings=None,
+        document_source_substrings_op=None,
+        document_content_substrings=None,
+        document_content_substrings_op=None,
         pre_prompt_query=None, prompt_query=None,
-        pre_prompt_summary=None, prompt_summary=None,
+        pre_prompt_summary=None, prompt_summary=None, hyde_llm_prompt=None,
         image_audio_loaders=None,
         pdf_loaders=None,
         url_loaders=None,
         jq_schema=None,
+        extract_frames=None,
         visible_models=None,
         h2ogpt_key=None,
         add_search_to_context=None,
@@ -66,15 +79,22 @@ def run_eval(  # for local function:
         docs_joiner=None,
         hyde_level=None,
         hyde_template=None,
+        hyde_show_only_final=None,
         doc_json_mode=None,
         chatbot_role=None,
         speaker=None,
         tts_language=None,
+        tts_speed=None,
         # for evaluate kwargs:
         captions_model=None,
         caption_loader=None,
         doctr_loader=None,
         pix2struct_loader=None,
+        llava_model=None,
+        image_gen_loader=None,
+        image_gen_loader_high=None,
+        image_change_loader=None,
+
         asr_model=None,
         asr_loader=None,
 
@@ -83,6 +103,7 @@ def run_eval(  # for local function:
         url_loaders_options0=None,
         jq_schema0=None,
         keep_sources_in_context=None,
+        allow_chat_system_prompt=None,
         src_lang=None, tgt_lang=None, concurrency_count=None, save_dir=None, sanitize_bot_response=None,
         model_state0=None,
         max_max_new_tokens=None,
@@ -229,12 +250,12 @@ def run_eval(  # for local function:
         score_median = 0
 
         for exi, ex in enumerate(examples):
-            clear_torch_cache()
+            clear_torch_cache(allow_skip=True)
 
             instruction = ex[eval_func_param_names.index('instruction_nochat')]
             iinput = ex[eval_func_param_names.index('iinput_nochat')]
             context = ex[eval_func_param_names.index('context')]
-            clear_torch_cache()
+            clear_torch_cache(allow_skip=True)
             print("")
             print("START" + "=" * 100)
             print("Question: %s %s" % (instruction, ('input=%s' % iinput if iinput else '')))

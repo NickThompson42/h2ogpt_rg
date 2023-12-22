@@ -13,6 +13,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Generator, Any, Union, List
 import ast
+from packaging import version
 
 os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
 
@@ -22,6 +23,18 @@ from huggingface_hub.utils import (
 )
 
 from gradio_client import utils
+
+from importlib.metadata import distribution, PackageNotFoundError
+
+try:
+    assert distribution('gradio_client') is not None
+    have_gradio_client = True
+    is_gradio_client_version7 = distribution('gradio_client').version.startswith('0.7.')
+except (PackageNotFoundError, AssertionError):
+    have_gradio_client = False
+    is_gradio_client_version7 = False
+
+
 from gradio_client.client import Job, DEFAULT_TEMP_DIR, Endpoint
 from gradio_client import Client
 
@@ -54,15 +67,17 @@ class LangChainAction(Enum):
     EXTRACT = "Extract"
 
 
-pre_prompt_query0 = "Pay attention and remember the information below, which will help to answer the question or imperative after the context ends.\n"
-prompt_query0 = "According to only the information in the document sources provided within the context above, "
+pre_prompt_query0 = "Pay attention and remember the information below, which will help to answer the question or imperative after the context ends."
+prompt_query0 = "According to only the information in the document sources provided within the context above: "
 
-pre_prompt_summary0 = """\n"""
-prompt_summary0 = "Using only the information in the document sources above, write a condensed and concise summary of key results (preferably as bullet points):\n"
+pre_prompt_summary0 = """"""
+prompt_summary0 = "Using only the information in the document sources above, write a condensed and concise summary of key results (preferably as bullet points)."
 
-pre_prompt_extraction0 = """In order to extract information, pay attention to the following text\n"""
-prompt_extraction0 = "Using only the information in the document sources above, extract: \n"
+pre_prompt_extraction0 = """In order to extract information, pay attention to the following text."""
+prompt_extraction0 = "Using only the information in the document sources above, extract "
 
+
+hyde_llm_prompt0 = "Answer this question with vibrant details in order for some NLP embedding model to use that answer as better query than original question: "
 
 class GradioClient(Client):
     """
@@ -75,9 +90,10 @@ class GradioClient(Client):
             src: str,
             hf_token: str | None = None,
             max_workers: int = 40,
-            serialize: bool = True,
+            serialize: bool = None,
             output_dir: str | Path | None = DEFAULT_TEMP_DIR,
             verbose: bool = True,
+            auth: tuple[str, str] | None = None,
             h2ogpt_key: str = None,
     ):
         """
@@ -89,6 +105,10 @@ class GradioClient(Client):
             output_dir: The directory to save files that are downloaded from the remote API. If None, reads from the GRADIO_TEMP_DIR environment variable. Defaults to a temporary directory on your machine.
             verbose: Whether the client should print statements to the console.
         """
+        if serialize is None:
+            # else converts inputs arbitrarily and outputs mutate
+            # False keeps as-is and is normal for h2oGPT
+            serialize = False
         self.args = tuple([src])
         self.kwargs = dict(
             hf_token=hf_token,
@@ -103,9 +123,16 @@ class GradioClient(Client):
         self.hf_token = hf_token
         self.serialize = serialize
         self.space_id = None
-        self.output_dir = output_dir
+        self.cookies: dict[str, str] = {}
+        if is_gradio_client_version7:
+            self.output_dir = (
+                str(output_dir) if isinstance(output_dir, Path) else output_dir
+            )
+        else:
+            self.output_dir = output_dir
         self.max_workers = max_workers
         self.src = src
+        self.auth = auth
         self.config = None
         self.server_hash = None
         self.h2ogpt_key = h2ogpt_key
@@ -154,16 +181,32 @@ class GradioClient(Client):
             print(f"Loaded as API: {self.src} ✔")
 
         self.api_url = urllib.parse.urljoin(self.src, utils.API_URL)
+        if is_gradio_client_version7:
+            self.sse_url = urllib.parse.urljoin(self.src, utils.SSE_URL)
+            self.sse_data_url = urllib.parse.urljoin(self.src, utils.SSE_DATA_URL)
         self.ws_url = urllib.parse.urljoin(
             self.src.replace("http", "ws", 1), utils.WS_URL
         )
         self.upload_url = urllib.parse.urljoin(self.src, utils.UPLOAD_URL)
         self.reset_url = urllib.parse.urljoin(self.src, utils.RESET_URL)
+        if is_gradio_client_version7:
+            if self.auth is not None:
+                self._login(self.auth)
         self.config = self._get_config()
+        if is_gradio_client_version7:
+            self.app_version = version.parse(self.config.get("version", "2.0"))
+            self._info = self._get_api_info()
         self.session_hash = str(uuid.uuid4())
 
+        if is_gradio_client_version7:
+            protocol = self.config.get("protocol")
+            from gradio_client.client import EndpointV3Compatibility
+
+            endpoint_class = Endpoint if protocol == "sse" else EndpointV3Compatibility
+        else:
+            endpoint_class = Endpoint
         self.endpoints = [
-            Endpoint(self, fn_index, dependency)
+            endpoint_class(self, fn_index, dependency)
             for fn_index, dependency in enumerate(self.config["dependencies"])
         ]
 
@@ -186,7 +229,9 @@ class GradioClient(Client):
         Get server hash using super without any refresh action triggered
         Returns: git hash of gradio server
         """
-        return super().submit(api_name="/system_hash").result()
+        # return super().submit(api_name="/system_hash").result()
+        # disable for helium for now, just return constant value if not in github repo
+        return "GET_GITHASH"
 
     def refresh_client_if_should(self, persist=True):
         if self.config is None:
@@ -384,6 +429,10 @@ class GradioClient(Client):
                                       top_k_docs: int = 10,
                                       document_choice: Union[str, List[str]] = "All",
                                       document_subset: str = "Relevant",
+                                      document_source_substrings: Union[str, List[str]] = [],
+                                      document_source_substrings_op: str = 'and',
+                                      document_content_substrings: Union[str, List[str]] = [],
+                                      document_content_substrings_op: str = 'and',
 
                                       system_prompt: str | None = '',
                                       pre_prompt_query: str | None = pre_prompt_query0,
@@ -392,6 +441,7 @@ class GradioClient(Client):
                                       prompt_summary: str | None = prompt_summary0,
                                       pre_prompt_extraction: str | None = pre_prompt_extraction0,
                                       prompt_extraction: str | None = prompt_extraction0,
+                                      hyde_llm_prompt: str | None = hyde_llm_prompt0,
 
                                       model: str | int | None = None,
                                       stream_output: bool = False,
@@ -415,6 +465,7 @@ class GradioClient(Client):
                                       docs_joiner: str = "\n\n",
                                       hyde_level: int = 0,
                                       hyde_template: str = None,
+                                      hyde_show_only_final: bool = True,
                                       doc_json_mode: bool = False,
 
                                       asserts: bool = False,
@@ -425,13 +476,17 @@ class GradioClient(Client):
             instruction: Query for LLM chat.  Used for similarity search
 
             For query, prompt template is:
-              "{pre_prompt_query}\"\"\"
+              "{pre_prompt_query}
+                \"\"\"
                 {content}
-                \"\"\"\n{prompt_query}{instruction}"
+                \"\"\"
+                {prompt_query}{instruction}"
              If added to summarization, prompt template is
-              "{pre_prompt_summary}:\"\"\"
+              "{pre_prompt_summary}
+                \"\"\"
                 {content}
-                \"\"\"\n, Focusing on {instruction}, {prompt_summary}"
+                \"\"\"
+                Focusing on {instruction}, {prompt_summary}"
             text: textual content or list of such contents
             file: a local file to upload or files to upload
             url: a url to give or urls to use
@@ -448,6 +503,10 @@ class GradioClient(Client):
             chunk_size: Size in characters of chunks
             document_choice: Which documents ("All" means all) -- need to use upload_api API call to get server's name if want to select
             document_subset: Type of query, see src/gen.py
+            document_source_substrings: See gen.py
+            document_source_substrings_op: See gen.py
+            document_content_substrings: See gen.py
+            document_content_substrings_op: See gen.py
 
             system_prompt: pass system prompt to models that support it.
               If 'auto' or None, then use automatic version
@@ -461,10 +520,12 @@ class GradioClient(Client):
               None makes h2oGPT internally use its defaults
               E.g. "Using only the text above, write a condensed and concise summary of key results (preferably as bullet points):\n"
             i.e. for some internal document part fstring, the template looks like:
-                template = "%s:
+                template = "%s
                 \"\"\"
                 %s
-                \"\"\"\n%s" % (pre_prompt_summary, fstring, prompt_summary)
+                \"\"\"
+                %s" % (pre_prompt_summary, fstring, prompt_summary)
+            hyde_llm_prompt: hyde prompt for first step when using LLM
             h2ogpt_key: Access Key to h2oGPT server (if not already set in client at init time)
             model: base_model name or integer index of model_lock on h2oGPT server
                             None results in use of first (0th index) model in server
@@ -508,6 +569,7 @@ class GradioClient(Client):
                         2: uses query + LLM response using docs to find similarity with docs
                         3+: etc.
             hyde_template: see src/gen.py
+            hyde_show_only_final: see src/gen.py
             doc_json_mode: see src/gen.py
 
             asserts: whether to do asserts to ensure handling is correct
@@ -526,7 +588,7 @@ class GradioClient(Client):
         # chunking not used here
         # MyData specifies scratch space, only persisted for this individual client call
         langchain_mode = langchain_mode or "MyData"
-        loaders = tuple([None, None, None, None])
+        loaders = tuple([None, None, None, None, None])
         doc_options = tuple([langchain_mode, chunk, chunk_size, embed])
         asserts |= bool(os.getenv("HARD_ASSERTS", False))
         if (
@@ -600,12 +662,17 @@ class GradioClient(Client):
             top_k_docs=top_k_docs,
             document_choice=document_choice,
             document_subset=document_subset,
+            document_source_substrings=document_source_substrings,
+            document_source_substrings_op=document_source_substrings_op,
+            document_content_substrings=document_content_substrings,
+            document_content_substrings_op=document_content_substrings_op,
 
             system_prompt=system_prompt,
             pre_prompt_query=pre_prompt_query,
             prompt_query=prompt_query,
             pre_prompt_summary=pre_prompt_summary,
             prompt_summary=prompt_summary,
+            hyde_llm_prompt=hyde_llm_prompt,
 
             visible_models=model,
             stream_output=stream_output,
@@ -629,6 +696,7 @@ class GradioClient(Client):
             docs_joiner=docs_joiner,
             hyde_level=hyde_level,
             hyde_template=hyde_template,
+            hyde_show_only_final=hyde_show_only_final,
             doc_json_mode=doc_json_mode,
         )
 
@@ -646,7 +714,7 @@ class GradioClient(Client):
                     if langchain_action != LangChainAction.EXTRACT.value:
                         response = response.strip()
                     else:
-                        response = [r.strip() for r in response]
+                        response = [r.strip() for r in ast.literal_eval(response)]
                     sources = res["sources"]
                     scores_out = [x["score"] for x in sources]
                     texts_out = [x["content"] for x in sources]
@@ -674,8 +742,6 @@ class GradioClient(Client):
                             res = job.communicator.job.outputs[-1]
                             res_dict = ast.literal_eval(res)
                             response = res_dict["response"]  # keeps growing
-                            sources = res_dict["sources"]
-                            texts_out = [x["content"] for x in sources]
                             text_chunk = response[len(text0):]  # only keep new stuff
                             if not text_chunk:
                                 time.sleep(0.001)

@@ -13,7 +13,8 @@ from tests.utils import wrap_test_forked, make_user_path_test, get_llama, get_in
 from src.client_test import get_client, get_args, run_client_gen
 from src.enums import LangChainAction, LangChainMode, no_model_str, no_lora_str, no_server_str, DocumentChoice, \
     db_types_full
-from src.utils import get_githash, remove, download_simple, hash_file, makedirs, lg_to_gr, FakeTokenizer
+from src.utils import get_githash, remove, download_simple, hash_file, makedirs, lg_to_gr, FakeTokenizer, \
+    is_gradio_version4
 from src.prompter import model_names_curated, openai_gpts, model_names_curated_big
 
 
@@ -139,7 +140,7 @@ def test_client1api_lean(save_dir, admin_pass):
          stream_output=False, gradio=True, num_beams=1, block_gradio_exit=False,
          save_dir=save_dir)
 
-    client1 = get_client(serialize=True)
+    client1 = get_client(serialize=False)
 
     from gradio_utils.grclient import GradioClient
     client2 = GradioClient(get_inf_server())
@@ -152,14 +153,13 @@ def test_client1api_lean(save_dir, admin_pass):
         # pass string of dict.  All entries are optional, but expect at least instruction_nochat to be filled
         res = client.predict(str(dict(kwargs)), api_name=api_name)
         res = ast.literal_eval(res)
-        if save_dir:
-            assert 'base_model' in res['save_dict']
-            assert res['save_dict']['base_model'] == base_model
-            assert res['save_dict']['error'] in [None, '']
-            assert 'extra_dict' in res['save_dict']
-            assert res['save_dict']['extra_dict']['ntokens'] > 0
-            assert res['save_dict']['extra_dict']['t_generate'] > 0
-            assert res['save_dict']['extra_dict']['tokens_persecond'] > 0
+        assert 'base_model' in res['save_dict']
+        assert res['save_dict']['base_model'] == base_model
+        assert res['save_dict']['error'] in [None, '']
+        assert 'extra_dict' in res['save_dict']
+        assert res['save_dict']['extra_dict']['ntokens'] > 0
+        assert res['save_dict']['extra_dict']['t_generate'] > 0
+        assert res['save_dict']['extra_dict']['tokens_persecond'] > 0
 
         print("Raw client result: %s" % res, flush=True)
         response = res['response']
@@ -203,7 +203,7 @@ def test_client1api_lean_lock_choose_model():
          stream_output=False, gradio=True, num_beams=1, block_gradio_exit=False,
          save_dir=save_dir)
 
-    client = get_client(serialize=True)
+    client = get_client(serialize=not is_gradio_version4)
     for prompt_type in ['human_bot', None, '', 'plain']:
         for visible_models in [None, 0, base1, 1, base2]:
             base_model = base1 if visible_models in [None, 0, base1] else base2
@@ -242,45 +242,24 @@ def test_client1api_lean_lock_choose_model():
     res = client.predict(api_name=api_name)
     res = ast.literal_eval(res)
     assert [x['base_model'] for x in res] == [base1, base2]
-    assert res == [{'base_model': 'h2oai/h2ogpt-oig-oasst1-512-6_9b', 'prompt_type': 'human_bot',
-                    'prompt_dict': {'promptA': '', 'promptB': '', 'PreInstruct': '<human>: ', 'PreInput': None,
-                                    'PreResponse': '<bot>:',
-                                    'terminate_response': ['\n<human>:', '\n<bot>:', '<human>:', '<bot>:', '<bot>:'],
-                                    'chat_sep': '\n', 'chat_turn_sep': '\n', 'humanstr': '<human>:', 'botstr': '<bot>:',
-                                    'generates_leading_space': True, 'system_prompt': ''}, 'load_8bit': False,
-                    'load_4bit': False, 'low_bit_mode': 1, 'load_half': True, 'load_gptq': '', 'load_awq': '',
-                    'load_exllama': False, 'use_safetensors': False, 'revision': None, 'use_gpu_id': True, 'gpu_id': 0,
-                    'compile_model': True, 'use_cache': None,
+    assert res == [{'base_model': 'h2oai/h2ogpt-oig-oasst1-512-6_9b', 'prompt_type': 'human_bot', 'prompt_dict': None,
+                    'load_8bit': False, 'load_4bit': False, 'low_bit_mode': 1, 'load_half': True,
+                    'use_flash_attention_2': False, 'load_gptq': '', 'load_awq': '', 'load_exllama': False,
+                    'use_safetensors': False, 'revision': None, 'use_gpu_id': True, 'gpu_id': 0, 'compile_model': None,
+                    'use_cache': None,
                     'llamacpp_dict': {'n_gpu_layers': 100, 'use_mlock': True, 'n_batch': 1024, 'n_gqa': 0,
-                                      'model_path_llama': 'https://huggingface.co/TheBloke/Llama-2-7b-Chat-GGUF/resolve/main/llama-2-7b-chat.Q6_K.gguf',
-                                      'model_name_gptj': 'ggml-gpt4all-j-v1.3-groovy.bin',
-                                      'model_name_gpt4all_llama': 'ggml-wizardLM-7B.q4_2.bin',
-                                      'model_name_exllama_if_no_config': 'TheBloke/Nous-Hermes-Llama2-GPTQ'},
-                    'model_path_llama': 'https://huggingface.co/TheBloke/Llama-2-7b-Chat-GGUF/resolve/main/llama-2-7b-chat.Q6_K.gguf',
-                    'model_name_gptj': 'ggml-gpt4all-j-v1.3-groovy.bin',
-                    'model_name_gpt4all_llama': 'ggml-wizardLM-7B.q4_2.bin',
-                    'model_name_exllama_if_no_config': 'TheBloke/Nous-Hermes-Llama2-GPTQ', 'rope_scaling': {},
-                    'max_seq_len': 2048, 'exllama_dict': {}, 'gptq_dict': {}, 'attention_sinks': False, 'sink_dict': {},
+                                      'model_path_llama': '', 'model_name_gptj': '', 'model_name_gpt4all_llama': '',
+                                      'model_name_exllama_if_no_config': ''}, 'rope_scaling': {}, 'max_seq_len': 2048,
+                    'exllama_dict': {}, 'gptq_dict': {}, 'attention_sinks': False, 'sink_dict': {},
                     'truncation_generation': False, 'hf_model_dict': {}},
-                   {'base_model': 'distilgpt2', 'prompt_type': 'plain',
-                    'prompt_dict': {'promptA': '', 'promptB': '', 'PreInstruct': '<human>: ', 'PreInput': None,
-                                    'PreResponse': '<bot>:',
-                                    'terminate_response': ['\n<human>:', '\n<bot>:', '<human>:', '<bot>:', '<bot>:'],
-                                    'chat_sep': '\n', 'chat_turn_sep': '\n', 'humanstr': '<human>:', 'botstr': '<bot>:',
-                                    'generates_leading_space': True, 'system_prompt': ''}, 'load_8bit': False,
-                    'load_4bit': False, 'low_bit_mode': 1, 'load_half': True, 'load_gptq': '', 'load_awq': '',
-                    'load_exllama': False, 'use_safetensors': False, 'revision': None, 'use_gpu_id': True, 'gpu_id': 0,
-                    'compile_model': True, 'use_cache': None,
+                   {'base_model': 'distilgpt2', 'prompt_type': 'plain', 'prompt_dict': None, 'load_8bit': False,
+                    'load_4bit': False, 'low_bit_mode': 1, 'load_half': True, 'use_flash_attention_2': False,
+                    'load_gptq': '', 'load_awq': '', 'load_exllama': False, 'use_safetensors': False, 'revision': None,
+                    'use_gpu_id': True, 'gpu_id': 0, 'compile_model': None, 'use_cache': None,
                     'llamacpp_dict': {'n_gpu_layers': 100, 'use_mlock': True, 'n_batch': 1024, 'n_gqa': 0,
-                                      'model_path_llama': 'https://huggingface.co/TheBloke/Llama-2-7b-Chat-GGUF/resolve/main/llama-2-7b-chat.Q6_K.gguf',
-                                      'model_name_gptj': 'ggml-gpt4all-j-v1.3-groovy.bin',
-                                      'model_name_gpt4all_llama': 'ggml-wizardLM-7B.q4_2.bin',
-                                      'model_name_exllama_if_no_config': 'TheBloke/Nous-Hermes-Llama2-GPTQ'},
-                    'model_path_llama': 'https://huggingface.co/TheBloke/Llama-2-7b-Chat-GGUF/resolve/main/llama-2-7b-chat.Q6_K.gguf',
-                    'model_name_gptj': 'ggml-gpt4all-j-v1.3-groovy.bin',
-                    'model_name_gpt4all_llama': 'ggml-wizardLM-7B.q4_2.bin',
-                    'model_name_exllama_if_no_config': 'TheBloke/Nous-Hermes-Llama2-GPTQ', 'rope_scaling': {},
-                    'max_seq_len': 1024, 'exllama_dict': {}, 'gptq_dict': {}, 'attention_sinks': False, 'sink_dict': {},
+                                      'model_path_llama': '', 'model_name_gptj': '', 'model_name_gpt4all_llama': '',
+                                      'model_name_exllama_if_no_config': ''}, 'rope_scaling': {}, 'max_seq_len': 1024,
+                    'exllama_dict': {}, 'gptq_dict': {}, 'attention_sinks': False, 'sink_dict': {},
                     'truncation_generation': False, 'hf_model_dict': {}}]
 
 
@@ -294,7 +273,7 @@ def test_client1api_lean_chat_server():
     prompt = 'Who are you?'
 
     kwargs = dict(instruction_nochat=prompt)
-    client = get_client(serialize=True)
+    client = get_client(serialize=not is_gradio_version4)
     # pass string of dict.  All entries are optional, but expect at least instruction_nochat to be filled
     res = client.predict(str(dict(kwargs)), api_name=api_name)
 
@@ -1280,14 +1259,16 @@ Summarize"""
         base_model = 'llama'
     else:
         base_model = 'h2oai/h2ogpt-4096-llama2-7b-chat'
-    model_path_llama = 'https://huggingface.co/TheBloke/Llama-2-7b-Chat-GGUF/resolve/main/llama-2-7b-chat.Q6_K.gguf'
-    # model_path_llama = 'https://huggingface.co/TheBloke/Llama-2-7b-Chat-GGUF/resolve/main/llama-2-7b-chat.Q8_0.gguf'
+    model_path_llama = 'https://huggingface.co/TheBloke/Llama-2-7b-Chat-GGUF/resolve/main/llama-2-7b-chat.Q6_K.gguf?download=true'
+    # model_path_llama = 'https://huggingface.co/TheBloke/Llama-2-7b-Chat-GGUF/resolve/main/llama-2-7b-chat.Q8_0.gguf?download=true'
     res_dict, client = run_client_chat_with_server(prompt=prompt,
                                                    max_seq_len=max_seq_len,
                                                    model_path_llama=model_path_llama,
                                                    stream_output=False,
                                                    prompt_type='llama2',
-                                                   base_model=base_model)
+                                                   base_model=base_model,
+                                                   max_time=250,  # for 4096 llama-2 GGUF, takes 75s
+                                                   )
     assert "solar eclipse" in res_dict['response']
 
 
@@ -1298,9 +1279,10 @@ def run_client_chat_with_server(prompt='Who are you?', stream_output=False, max_
                                 langchain_agents=[],
                                 user_path=None,
                                 langchain_modes=['UserData', 'MyData', 'Disabled', 'LLM'],
-                                model_path_llama='https://huggingface.co/TheBloke/Llama-2-7b-Chat-GGUF/resolve/main/llama-2-7b-chat.Q6_K.gguf',
+                                model_path_llama='https://huggingface.co/TheBloke/Llama-2-7b-Chat-GGUF/resolve/main/llama-2-7b-chat.Q6_K.gguf?download=true',
                                 docs_ordering_type='reverse_ucurve_sort',
-                                max_seq_len=None):
+                                max_seq_len=None,
+                                max_time=20):
     if langchain_mode == 'Disabled':
         os.environ['TEST_LANGCHAIN_IMPORT'] = "1"
         sys.modules.pop('gpt_langchain', None)
@@ -1315,12 +1297,14 @@ def run_client_chat_with_server(prompt='Who are you?', stream_output=False, max_
          langchain_mode=langchain_mode, user_path=user_path,
          langchain_modes=langchain_modes,
          docs_ordering_type=docs_ordering_type,
-         max_seq_len=max_seq_len)
+         max_seq_len=max_seq_len,
+         verbose=True)
 
     from src.client_test import run_client_chat
     res_dict, client = run_client_chat(prompt=prompt, prompt_type=prompt_type, stream_output=stream_output,
                                        max_new_tokens=max_new_tokens, langchain_mode=langchain_mode,
-                                       langchain_action=langchain_action, langchain_agents=langchain_agents)
+                                       langchain_action=langchain_action, langchain_agents=langchain_agents,
+                                       max_time=max_time)
     assert res_dict['prompt'] == prompt
     assert res_dict['iinput'] == ''
     return res_dict, client
@@ -1337,7 +1321,7 @@ def run_client_nochat_with_server(prompt='Who are you?', stream_output=False, ma
                                   langchain_agents=[],
                                   user_path=None,
                                   langchain_modes=['UserData', 'MyData', 'Disabled', 'LLM'],
-                                  docs_ordering_type='reverse_ucurve_sort'):
+                                  docs_ordering_type='reverse_ucurve_sort', other_server_kwargs={}):
     if langchain_mode == 'Disabled':
         os.environ['TEST_LANGCHAIN_IMPORT'] = "1"
         sys.modules.pop('gpt_langchain', None)
@@ -1350,7 +1334,8 @@ def run_client_nochat_with_server(prompt='Who are you?', stream_output=False, ma
          langchain_mode=langchain_mode, langchain_action=langchain_action, langchain_agents=langchain_agents,
          user_path=user_path,
          langchain_modes=langchain_modes,
-         docs_ordering_type=docs_ordering_type)
+         docs_ordering_type=docs_ordering_type,
+         **other_server_kwargs)
 
     from src.client_test import run_client_nochat_gen
     res_dict, client = run_client_nochat_gen(prompt=prompt, prompt_type=prompt_type,
@@ -1363,9 +1348,17 @@ def run_client_nochat_with_server(prompt='Who are you?', stream_output=False, ma
     return res_dict, client
 
 
+@pytest.mark.parametrize("gradio_ui_stream_chunk_size", [0, 20])
+@pytest.mark.parametrize("gradio_ui_stream_chunk_min_seconds", [0, .2, 2])
+@pytest.mark.parametrize("gradio_ui_stream_chunk_seconds", [.2, 2])
 @wrap_test_forked
-def test_client_nochat_stream():
-    run_client_nochat_with_server(stream_output=True, prompt="Tell a very long kid's story about birds.")
+def test_client_nochat_stream(gradio_ui_stream_chunk_size, gradio_ui_stream_chunk_min_seconds,
+                              gradio_ui_stream_chunk_seconds):
+    other_server_kwargs = dict(gradio_ui_stream_chunk_size=gradio_ui_stream_chunk_size,
+                               gradio_ui_stream_chunk_min_seconds=gradio_ui_stream_chunk_min_seconds,
+                               gradio_ui_stream_chunk_seconds=gradio_ui_stream_chunk_seconds)
+    run_client_nochat_with_server(stream_output=True, prompt="Tell a very long kid's story about birds.",
+                                  other_server_kwargs=other_server_kwargs)
 
 
 @wrap_test_forked
@@ -1654,7 +1647,9 @@ def test_client_chat_stream_langchain_steps2(max_new_tokens, top_k_docs, auto_mi
             res_dict['response'] or
             'A new open-source language model that is fully permissive' in res_dict['response'] or
             'h2oGPT is an open-source' in res_dict['response'] or
-            'h2oGPT is an open-source, fully permissive, commercially usable' in res_dict['response']
+            'h2oGPT is an open-source, fully permissive, commercially usable' in res_dict['response'] or
+            'Based on the information provided in the context, h2oGPT appears to be an open-source' in res_dict[
+                'response']
             ) and \
            'README.md' in res_dict['response']
 
@@ -1795,10 +1790,11 @@ def check_langchain():
     chunk = True
     chunk_size = 512
     langchain_mode = 'MyData'
+    loaders = tuple([None, None, None, None, None])
     h2ogpt_key = ''
     res = client.predict(test_file_server,
                          langchain_mode, chunk, chunk_size, True,
-                         None, None, None, None,
+                         *loaders,
                          h2ogpt_key,
                          api_name='/add_file_api')
     assert res[0] is None
@@ -1889,12 +1885,13 @@ def test_attention_sinks(max_seq_len, attention_sinks):
     make_db_main(download_some=True)
     user_path = None  # shouldn't be necessary, db already made
 
-    prompt = 'Give an extremely detailed report that is well-structured with step-by-step sections (and elaborate details for each section) that describes the documents. Do not stop or end the report, just keep generating forever in never-ending report.'
+    prompt = 'Write an extremely fully detailed never-ending report that is well-structured with step-by-step sections (and elaborate details for each section) that describes the documents.  Never stop the report.'
     stream_output = True
     max_new_tokens = 100000
     max_max_new_tokens = max_new_tokens
-    base_model = 'mistralai/Mistral-7B-Instruct-v0.1'
-    prompt_type = 'mistral'
+    # base_model = 'mistralai/Mistral-7B-Instruct-v0.1'
+    base_model = 'HuggingFaceH4/zephyr-7b-beta'
+    prompt_type = 'zephyr'
     langchain_mode = 'UserData'
     langchain_action = LangChainAction.QUERY.value
     langchain_agents = []
@@ -1917,7 +1914,7 @@ def test_attention_sinks(max_seq_len, attention_sinks):
          # mistral is 32k if don't say, easily run GPU OOM even on 48GB (even with --use_gpu_id=False)
          docs_ordering_type=docs_ordering_type,
          cut_distance=1.8,  # probably should allow control via API/UI
-         sink_dict={'attention_sink_size': 4, 'attention_sink_window_size': 4096} if attention_sinks else {},
+         sink_dict={'num_sink_tokens': 4, 'window_length': 4096} if attention_sinks else {},
          )
 
     from src.client_test import run_client_chat
@@ -1928,7 +1925,7 @@ def test_attention_sinks(max_seq_len, attention_sinks):
                                        max_time=600, repetition_penalty=1.07, do_sample=False)
     assert res_dict['prompt'] == prompt
     assert res_dict['iinput'] == ''
-    assert len(res_dict['response']) > 2500, "%s %s" % (len(res_dict['response']), res_dict['response'])
+    assert len(res_dict['response']) > 2400, "%s %s" % (len(res_dict['response']), res_dict['response'])
 
     check_langchain()
 
@@ -2030,7 +2027,7 @@ def test_client_stress(repeat):
     prompt = "Tell a very long kid's story about birds."
     # prompt = "Say exactly only one word."
 
-    client = get_client(serialize=True)
+    client = get_client(serialize=not is_gradio_version4)
     kwargs = dict(
         instruction='',
         max_new_tokens=200,
@@ -2062,7 +2059,7 @@ def test_client_stress_stream(repeat):
     stream_output = True
     chat = False
 
-    client = get_client(serialize=True)
+    client = get_client(serialize=not is_gradio_version4)
     kwargs, args = get_args(prompt, prompt_type, chat=chat, stream_output=stream_output,
                             max_new_tokens=max_new_tokens, langchain_mode=langchain_mode)
     res_dict, client = run_client_gen(client, kwargs, do_md_to_text=False)
@@ -2120,7 +2117,7 @@ def test_client_chat_stream_langchain_steps3(loaders, enforce_h2ogpt_api_key, en
     user_path = make_user_path_test()
 
     if loaders is None:
-        loaders = tuple([None, None, None, None])
+        loaders = tuple([None, None, None, None, None])
     else:
         image_audio_loaders_options0, image_audio_loaders_options, \
             pdf_loaders_options0, pdf_loaders_options, \
@@ -2131,8 +2128,15 @@ def test_client_chat_stream_langchain_steps3(loaders, enforce_h2ogpt_api_key, en
                      enable_doctr=True,
                      enable_pix2struct=True,
                      enable_transcriptions=True,
+                     use_pypdf=True,
+                     use_unstructured_pdf=True,
+                     try_pdf_as_html=True,
+                     enable_llava=True,
+                     llava_model=None,
                      max_quality=True)
-        loaders = [image_audio_loaders_options, pdf_loaders_options, url_loaders_options, None]
+        # use all loaders except crawling ones
+        url_loaders_options = [x for x in url_loaders_options if 'scrape' not in x.lower()]
+        loaders = [image_audio_loaders_options, pdf_loaders_options, url_loaders_options, None, 0]
 
     stream_output = True
     max_new_tokens = 256
@@ -2217,7 +2221,9 @@ def test_client_chat_stream_langchain_steps3(loaders, enforce_h2ogpt_api_key, en
             "the text in the provided PDF file is quite repetitive and boring" in res_dict['response'] or
             "the provided PDF file is quite boring" in res_dict['response'] or
             "finds more text to be boring" in res_dict['response'] or
-            "text to be boring" in res_dict['response']) \
+            "text to be boring" in res_dict['response'] or
+            "author finds more text to be boring" in res_dict['response'] or
+            "more text is boring" in res_dict['response']) \
            and 'sample1.pdf' in res_dict['response']
     # QUERY2
     prompt = "What is a universal file format?"
@@ -2233,7 +2239,9 @@ def test_client_chat_stream_langchain_steps3(loaders, enforce_h2ogpt_api_key, en
     # is not actual data!
     assert isinstance(res[1], str)
     res = res[0]
-    with open(res['name'], 'rb') as f:
+    if not is_gradio_version4:
+        res = res['name']
+    with open(res, 'rb') as f:
         sources = f.read().decode()
     sources_expected = f'{user_path}/FAQ.md\n{user_path}/README.md\n{user_path}/pexels-evg-kowalievska-1170986_small.jpg\n{user_path}/sample1.pdf'
     assert sources == sources_expected or sources.replace('\\', '/').replace('\r', '') == sources_expected.replace(
@@ -2242,7 +2250,9 @@ def test_client_chat_stream_langchain_steps3(loaders, enforce_h2ogpt_api_key, en
     res = client.predict(langchain_mode2, api_name='/get_sources')
     assert isinstance(res[1], str)
     res = res[0]
-    with open(res['name'], 'rb') as f:
+    if not is_gradio_version4:
+        res = res['name']
+    with open(res, 'rb') as f:
         sources = f.read().decode()
     sources_expected = """%s/pdf-sample.pdf""" % user_path2
     assert sources == sources_expected or sources.replace('\\', '/').replace('\r', '') == sources_expected.replace(
@@ -2253,7 +2263,9 @@ def test_client_chat_stream_langchain_steps3(loaders, enforce_h2ogpt_api_key, en
     assert isinstance(res[1], str)
     res = res[0]
     # is not actual data!
-    with open(res['name'], 'rb') as f:
+    if not is_gradio_version4:
+        res = res['name']
+    with open(res, 'rb') as f:
         sources = f.read().decode()
     sources_expected = f'{user_path}/FAQ.md\n{user_path}/README.md\n{user_path}/pexels-evg-kowalievska-1170986_small.jpg\n{user_path}/sample1.pdf'
     assert sources == sources_expected or sources.replace('\\', '/').replace('\r', '') == sources_expected.replace(
@@ -2262,7 +2274,9 @@ def test_client_chat_stream_langchain_steps3(loaders, enforce_h2ogpt_api_key, en
     res = client.predict(langchain_mode2, api_name='/get_viewable_sources')
     assert isinstance(res[1], str)
     res = res[0]
-    with open(res['name'], 'rb') as f:
+    if not is_gradio_version4:
+        res = res['name']
+    with open(res, 'rb') as f:
         sources = f.read().decode()
     sources_expected = """%s/pdf-sample.pdf""" % user_path2
     assert sources == sources_expected or sources.replace('\\', '/').replace('\r', '') == sources_expected.replace(
@@ -2282,7 +2296,9 @@ def test_client_chat_stream_langchain_steps3(loaders, enforce_h2ogpt_api_key, en
     assert isinstance(res[1], str)
     res = res[0]
     # is not actual data!
-    with open(res['name'], 'rb') as f:
+    if not is_gradio_version4:
+        res = res['name']
+    with open(res, 'rb') as f:
         sources = f.read().decode()
     sources_expected = f'{user_path}/FAQ.md\n{user_path}/README.md\n{user_path}/next.txt\n{user_path}/pexels-evg-kowalievska-1170986_small.jpg\n{user_path}/sample1.pdf'
     assert sources == sources_expected or sources.replace('\\', '/').replace('\r', '') == sources_expected.replace(
@@ -2298,8 +2314,10 @@ def test_client_chat_stream_langchain_steps3(loaders, enforce_h2ogpt_api_key, en
     file_to_get = sources_expected[3]
     view_raw_text = False
     text_context_list = None
+    pdf_height = 1000
     source_dict = ast.literal_eval(
-        client.predict(langchain_mode, file_to_get, view_raw_text, text_context_list, api_name='/get_document_api'))
+        client.predict(langchain_mode, file_to_get, view_raw_text, text_context_list, pdf_height,
+                       api_name='/get_document_api'))
     assert len(source_dict['contents']) == 1
     assert len(source_dict['metadatas']) == 1
     assert isinstance(source_dict['contents'][0], str)
@@ -2309,7 +2327,8 @@ def test_client_chat_stream_langchain_steps3(loaders, enforce_h2ogpt_api_key, en
 
     view_raw_text = True  # dict of metadatas stays dict instead of string
     source_dict = ast.literal_eval(
-        client.predict(langchain_mode, file_to_get, view_raw_text, text_context_list, api_name='/get_document_api'))
+        client.predict(langchain_mode, file_to_get, view_raw_text, text_context_list, pdf_height,
+                       api_name='/get_document_api'))
     assert len(source_dict['contents']) == 2  # chunk_id=0 (query) and -1 (summarization)
     assert len(source_dict['metadatas']) == 2  # chunk_id=0 (query) and -1 (summarization)
     assert isinstance(source_dict['contents'][0], str)
@@ -2333,7 +2352,7 @@ def test_client_chat_stream_langchain_steps3(loaders, enforce_h2ogpt_api_key, en
     res = client.predict(api_name='/export_chats')
     assert res is not None
 
-    url = 'https://research.google/pubs/pub334.pdf'
+    url = 'https://services.google.com/fh/files/misc/e_conomy_sea_2021_report.pdf'
     res = client.predict(url, langchain_mode, True, 512, True,
                          *loaders,
                          h2ogpt_key,
@@ -2537,7 +2556,7 @@ def test_client_load_unload_models(model_choice):
     lora_choice = ''
     server_choice = '' if model_choice not in openai_gpts else 'openai_chat'
     # model_state
-    prompt_type = ''
+    prompt_type = '' if model_choice != 'llama' else 'llama2'  # built-in, but prompt_type needs to be selected
     model_load8bit_checkbox = False
     model_load4bit_checkbox = 'AWQ' not in model_choice and 'GGUF' not in model_choice and 'GPTQ' not in model_choice
     model_low_bit_mode = 1
@@ -2551,7 +2570,7 @@ def test_client_load_unload_models(model_choice):
     max_seq_len = -1
     rope_scaling = '{}'
     # GGML:
-    model_path_llama = 'https://huggingface.co/TheBloke/Llama-2-7b-Chat-GGUF/resolve/main/llama-2-7b-chat.Q6_K.gguf'
+    model_path_llama = 'https://huggingface.co/TheBloke/Llama-2-7b-Chat-GGUF/resolve/main/llama-2-7b-chat.Q6_K.gguf?download=true' if model_choice == 'llama' else ''
     model_name_gptj = ''
     model_name_gpt4all_llama = ''
     n_gpu_layers = 100
@@ -2581,35 +2600,58 @@ def test_client_load_unload_models(model_choice):
                  exllama_dict, gptq_dict, attention_sinks, sink_dict, truncation_generation, hf_model_dict,
                  ]
     res = client.predict(*tuple(args_list), api_name='/load_model')
+
     model_choice_ex = model_choice
+    model_load_gptq_ex = 'model' if 'GPTQ' in model_choice else ''
+    model_load_awq_ex = 'model' if 'AWQ' in model_choice else ''
+    model_path_llama_ex = 'https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGUF/resolve/main/llama-2-7b-chat.Q5_K_M.gguf?download=true' if model_choice == 'llama' else ''
+
     if model_choice == 'h2oai/h2ogpt-oig-oasst1-512-6_9b':
         prompt_type_ex = 'human_bot'
         max_seq_len_ex = 2048.0
-    elif model_choice in ['llama', 'TheBloke/Llama-2-7B-Chat-GGUF']:
+        max_seq_len_ex2 = max_seq_len_ex
+    elif model_choice in ['llama']:
         prompt_type_ex = 'llama2'
         model_choice_ex = 'llama'
+        model_path_llama_ex = 'https://huggingface.co/TheBloke/Llama-2-7b-Chat-GGUF/resolve/main/llama-2-7b-chat.Q6_K.gguf?download=true'
         max_seq_len_ex = 4096.0
+        max_seq_len_ex2 = max_seq_len_ex
+    elif model_choice in ['TheBloke/Llama-2-7B-Chat-GGUF']:
+        prompt_type_ex = 'llama2'
+        model_choice_ex = 'llama'
+        model_path_llama_ex = 'https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGUF/resolve/main/llama-2-7b-chat.Q5_K_M.gguf?download=true'
+        max_seq_len_ex = 4096.0
+        max_seq_len_ex2 = max_seq_len_ex
     elif model_choice in ['TheBloke/zephyr-7B-beta-GGUF']:
         prompt_type_ex = 'zephyr'
         model_choice_ex = 'llama'
+        model_path_llama_ex = 'https://huggingface.co/TheBloke/zephyr-7B-beta-GGUF/resolve/main/zephyr-7b-beta.Q5_K_M.gguf?download=true'
         max_seq_len_ex = 4096.0
+        max_seq_len_ex2 = max_seq_len_ex
     elif model_choice in ['HuggingFaceH4/zephyr-7b-beta',
                           'TheBloke/zephyr-7B-beta-AWQ']:
         prompt_type_ex = 'zephyr'
         max_seq_len_ex = 32768.0
+        max_seq_len_ex2 = max_seq_len_ex
     elif model_choice in ['TheBloke/Xwin-LM-13B-V0.1-GPTQ']:
         prompt_type_ex = 'xwin'
         max_seq_len_ex = 4096.0
+        max_seq_len_ex2 = max_seq_len_ex
     elif model_choice in ['gpt-3.5-turbo']:
         prompt_type_ex = 'openai_chat'
-        max_seq_len_ex = 4046.0
+        max_seq_len_ex = 4096.0
+        max_seq_len_ex2 = 4046
     else:
         raise ValueError("No such model_choice=%s" % model_choice)
     res_expected = (
-        model_choice_ex, '', server_choice, prompt_type_ex, max_seq_len_ex, {'__type__': 'update', 'maximum': 1024},
-        {'__type__': 'update', 'maximum': 1024})
+        model_choice_ex, '', server_choice, prompt_type_ex, max_seq_len_ex2,
+        {'__type__': 'update', 'maximum': int(max_seq_len_ex)},
+        {'__type__': 'update', 'maximum': int(max_seq_len_ex)},
+        model_path_llama_ex,
+        '', '',
+        model_load_gptq_ex, model_load_awq_ex,
+        0.0, 128.0, 100.0, '{}')
     assert res == res_expected
-    model_used, lora_used, server_used, prompt_type, max_seq_len1new, max_new_tokens, min_new_tokens = res_expected
 
     prompt = "Who are you?"
     kwargs = dict(stream_output=stream_output, instruction=prompt)
@@ -2621,7 +2663,11 @@ def test_client_load_unload_models(model_choice):
     args_list[0] = no_model_str
     res = client.predict(*tuple(args_list), api_name='/load_model')
     res_expected = (no_model_str, no_lora_str, no_server_str, '', -1.0, {'__type__': 'update', 'maximum': 256},
-                    {'__type__': 'update', 'maximum': 256})
+                    {'__type__': 'update', 'maximum': 256},
+                    '',
+                    '', '',
+                    '', '',
+                    0.0, 128.0, 100.0, '{}')
     assert res == res_expected
 
 
@@ -2631,13 +2677,14 @@ def test_client_load_unload_models(model_choice):
                          model_names_curated +
                          ['zephyr-7b-beta.Q5_K_M.gguf'] +
                          [
-                             'https://huggingface.co/TheBloke/Llama-2-7b-Chat-GGUF/resolve/main/llama-2-7b-chat.Q6_K.gguf'])
+                             'https://huggingface.co/TheBloke/Llama-2-7b-Chat-GGUF/resolve/main/llama-2-7b-chat.Q6_K.gguf?download=true'])
 @wrap_test_forked
 def test_client_curated_base_models(base_model, stream_output):
     if base_model in model_names_curated_big:
         return
     if base_model == 'zephyr-7b-beta.Q5_K_M.gguf' and not os.path.isfile('zephyr-7b-beta.Q5_K_M.gguf'):
-        download_simple('https://huggingface.co/TheBloke/zephyr-7B-beta-GGUF/resolve/main/zephyr-7b-beta.Q5_K_M.gguf')
+        download_simple(
+            'https://huggingface.co/TheBloke/zephyr-7B-beta-GGUF/resolve/main/zephyr-7b-beta.Q5_K_M.gguf?download=true')
 
     stream_output = True
     from src.gen import main
@@ -2690,9 +2737,10 @@ def test_client_chat_stream_langchain_openai_embeddings():
     url = 'https://www.africau.edu/images/default/sample.pdf'
     test_file1 = os.path.join('/tmp/', 'sample1.pdf')
     download_simple(url, dest=test_file1)
+    loaders = tuple([None, None, None, None, None])
     h2ogpt_key = ''
     res = client.predict(test_file1, langchain_mode, True, 512, True,
-                         None, None, None, None,
+                         *loaders,
                          h2ogpt_key,
                          api_name='/add_file_api')
     assert res[0] is None
@@ -2728,7 +2776,7 @@ def test_client_clone(stream_output):
         response = res_dict['response']
         assert len(response) > 0
         sources = res_dict['sources']
-        assert sources == ''
+        assert sources == []
 
 
 @pytest.mark.parametrize("max_time", [1, 5])
@@ -2752,7 +2800,7 @@ def test_client_timeout(stream_output, max_time):
     assert len(response) > 0
     assert time.time() - t0 < max_time * 2
     sources = res_dict['sources']
-    assert sources == ''
+    assert sources == []
 
     # get file for client to upload
     url = 'https://cdn.openai.com/papers/whisper.pdf'
@@ -2769,10 +2817,11 @@ def test_client_timeout(stream_output, max_time):
     chunk = True
     chunk_size = 512
     langchain_mode = 'MyData'
+    loaders = tuple([None, None, None, None, None])
     h2ogpt_key = ''
     res = client.predict(test_file_server,
                          langchain_mode, chunk, chunk_size, True,
-                         None, None, None, None,
+                         *loaders,
                          h2ogpt_key,
                          api_name='/add_file_api')
     assert res[0] is None
@@ -2899,7 +2948,7 @@ def go_upload_gradio():
 
 
 # NOTE: llama-7b on 24GB will go OOM for helium1/2 tests
-@pytest.mark.parametrize("inference_server", [None, 'openai_chat', 'openai_azure_chat', 'replicate'])
+@pytest.mark.parametrize("inference_server", [None, 'openai', 'openai_chat', 'openai_azure_chat', 'replicate'])
 # local_server=True
 @pytest.mark.parametrize("base_model",
                          ['h2oai/h2ogpt-oig-oasst1-512-6_9b', 'h2oai/h2ogpt-4096-llama2-7b-chat', 'gpt-3.5-turbo'])
@@ -3188,7 +3237,7 @@ def run_client_chat_stream_langchain_fake_embeddings(data_kind, base_model, loca
             if base_model == 'gpt-3.5-turbo':
                 tokens_expected = 3000 if local_server else 2900
                 expected_return_number = 14 if local_server else 14
-                expected_return_number2 = 15 if 'azure' not in inference_server else 14
+                expected_return_number2 = 14 if 'azure' not in inference_server else 14
             elif inference_server and 'replicate' in inference_server:
                 tokens_expected = 3000 if local_server else 2900
                 expected_return_number = 11 if local_server else 11
@@ -3307,6 +3356,7 @@ Rating: 5 (most positive)"""
     embed = False
     chunk = False
     chunk_size = 512
+    loaders = tuple([None, None, None, None, None])
     h2ogpt_key = ''
     api_name = '/submit_nochat_api'  # NOTE: like submit_nochat but stable API for string dict passing
     print("TIME prep: %s %s %s" % (data_kind, base_model, time.time() - t0), flush=True, file=sys.stderr)
@@ -3359,7 +3409,7 @@ Rating: 5 (most positive)"""
     # Full langchain with db
     res = client.predict(texts,
                          langchain_mode, chunk, chunk_size, embed,
-                         None, None, None, None,
+                         *loaders,
                          h2ogpt_key,
                          api_name='/add_text')
     assert res[0] is None
@@ -3519,10 +3569,11 @@ def test_client_summarization(prompt_summary, inference_server, top_k_docs, stre
     chunk = True
     chunk_size = 512
     langchain_mode = 'MyData'
+    loaders = tuple([None, None, None, None, None])
     h2ogpt_key = ''
     res = client.predict(test_file_server,
                          langchain_mode, chunk, chunk_size, True,
-                         None, None, None, None,
+                         *loaders,
                          h2ogpt_key,
                          api_name='/add_file_api')
     assert res[0] is None
@@ -3552,8 +3603,9 @@ def test_client_summarization(prompt_summary, inference_server, top_k_docs, stre
     summary = res['response']
     sources = res['sources']
     if langchain_action == 'Extract':
-        assert isinstance(summary, list) or 'No relevant documents to extract from.' == summary
-        summary = str(summary)  # for easy checking
+        extraction = ast.literal_eval(summary)
+        assert isinstance(extraction, list) or 'No relevant documents to extract from.' in str(extraction)
+        summary = str(extraction)  # for easy checking
 
     if which_doc == 'whisper':
         if instruction == 'Technical key points':
@@ -3582,14 +3634,14 @@ def test_client_summarization(prompt_summary, inference_server, top_k_docs, stre
                        'text standardization' in summary or \
                        'speech processing systems' in summary
             if summary == 'No relevant documents to extract from.':
-                assert sources == ''
+                assert sources == []
             else:
                 assert 'Robust Speech Recognition' in [x['content'] for x in sources][0]
                 assert 'whisper1.pdf' in [x['source'] for x in sources][0]
     else:
         # weaviate as usual gets confused and has too many sources
         if summary == 'No relevant documents to extract from.':
-            assert sources == ''
+            assert sources == []
         else:
             assert '1paul_graham.txt' in [x['source'] for x in sources][0]
 
@@ -3617,14 +3669,15 @@ def test_client_summarization_from_text():
 
     # PURE client code
     from gradio_client import Client
-    client = Client(get_inf_server(), serialize=True)
+    client = Client(get_inf_server(), serialize=False)
     chunk = True
     chunk_size = 512
     langchain_mode = 'MyData'
+    loaders = tuple([None, None, None, None, None])
     h2ogpt_key = ''
     res = client.predict(all_text_contents,
                          langchain_mode, chunk, chunk_size, True,
-                         None, None, None, None,
+                         *loaders,
                          h2ogpt_key,
                          api_name='/add_text')
     assert res[0] is None
@@ -3652,6 +3705,10 @@ def test_client_summarization_from_text():
     assert 'Whisper' in summary or 'robust speech recognition system' in summary
     assert 'Robust Speech Recognition' in [x['content'] for x in sources][0]
     assert 'user_paste' in [x['source'] for x in sources][0]
+    assert len(res['prompt_raw']) > 40000
+    assert '<s>[INST]' in res['prompt_raw']
+    assert len(ast.literal_eval(res['prompt_raw'])) == 5
+    assert 'llm_answers' in res
 
 
 @pytest.mark.parametrize("url", ['https://cdn.openai.com/papers/whisper.pdf', 'https://github.com/h2oai/h2ogpt'])
@@ -3668,14 +3725,15 @@ def test_client_summarization_from_url(url, top_k_docs):
 
     # PURE client code
     from gradio_client import Client
-    client = Client(get_inf_server(), serialize=True)
+    client = Client(get_inf_server(), serialize=False)
     chunk = True
     chunk_size = 512
     langchain_mode = 'MyData'
+    loaders = tuple([None, None, None, None, None])
     h2ogpt_key = ''
     res = client.predict(url,
                          langchain_mode, chunk, chunk_size, True,
-                         None, None, None, None,
+                         *loaders,
                          h2ogpt_key,
                          api_name='/add_url')
     assert res[0] is None
@@ -3747,7 +3805,7 @@ def test_fastsys(stream_output, bits, prompt_type):
            "As  an  AI  language  model,  I  don't  have  a  personal  identity  or  physical  presence.  I  exist  solely  to  provide  information  and  answer  questions  to  the  best  of  my  ability.  How  can  I  assist  you  today?" in response or \
            "As  an  AI  language  model,  I  don't  have  a  physical  identity  or  a  physical  presence.  I  exist  solely  to  provide  information  and  answer  questions  to  the  best  of  my  ability.  How  can  I  assist  you  today?" in response
     sources = res_dict['sources']
-    assert sources == ''
+    assert sources == []
 
     # get file for client to upload
     url = 'https://cdn.openai.com/papers/whisper.pdf'
@@ -3764,10 +3822,11 @@ def test_fastsys(stream_output, bits, prompt_type):
     chunk = True
     chunk_size = 512
     langchain_mode = 'MyData'
+    loaders = tuple([None, None, None, None, None])
     h2ogpt_key = ''
     res = client.predict(test_file_server,
                          langchain_mode, chunk, chunk_size, True,
-                         None, None, None, None,
+                         *loaders,
                          h2ogpt_key,
                          api_name='/add_file_api')
     assert res[0] is None
@@ -3828,11 +3887,12 @@ def test_hyde(stream_output, hyde_level, hyde_template):
     chunk = True
     chunk_size = 512
     langchain_mode = 'MyData'
+    loaders = tuple([None, None, None, None, None])
     h2ogpt_key = ''
     embed = True
     res = client.predict(test_file_server,
                          langchain_mode, chunk, chunk_size, embed,
-                         None, None, None, None,
+                         *loaders,
                          h2ogpt_key,
                          api_name='/add_file_api')
     assert res[0] is None
@@ -3904,6 +3964,8 @@ def test_client1_tts(tts_model):
 
     play_audio(res, sr=sr)
 
+    check_final_res(res)
+
 
 def play_audio(res, sr=16000):
     # convert audio to file
@@ -3934,13 +3996,18 @@ def play_audio(res, sr=16000):
     'microsoft/speecht5_tts',
     'tts_models/multilingual/multi-dataset/xtts_v2'
 ])
+@pytest.mark.parametrize("base_model", [
+    'llama',
+    'HuggingFaceH4/zephyr-7b-beta'
+])
 @wrap_test_forked
-def test_client1_tts_stream(tts_model):
+def test_client1_tts_stream(tts_model, base_model):
     sr = set_env(tts_model)
 
     from src.gen import main
-    main(base_model='llama', chat=False,
+    main(base_model=base_model, chat=False,
          tts_model=tts_model,
+         save_dir='foodir',
          stream_output=True, gradio=True, num_beams=1, block_gradio_exit=False)
 
     from gradio_client import Client
@@ -3951,25 +4018,88 @@ def test_client1_tts_stream(tts_model):
     kwargs = dict(instruction_nochat=prompt, chatbot_role="Female AI Assistant", speaker="SLT (female)",
                   stream_output=True)
 
+    # check curl before and after, because in some cases had curl lead to .cpu() and normal use would fail
+    check_curl_plain_api()
+
+    verbose = False
     job = client.submit(str(dict(kwargs)), api_name='/submit_nochat_api')
     job_outputs_num = 0
     while not job.done():
         outputs_list = job.communicator.job.outputs
-        job_outputs_num_new = len(outputs_list[job_outputs_num + 1:])
+        job_outputs_num_new = len(outputs_list[job_outputs_num:])
         for num in range(job_outputs_num_new):
             res = outputs_list[job_outputs_num + num]
             res = ast.literal_eval(res)
-            print('Stream %d: %s\n' % (num, res['response']), flush=True)
+            if verbose:
+                print('Stream %d: %s\n\n %s\n\n' % (num, res['response'], res), flush=True)
+            else:
+                print('Stream %d' % (job_outputs_num + num), flush=True)
             play_audio(res, sr=sr)
         job_outputs_num += job_outputs_num_new
         time.sleep(0.01)
 
     outputs_list = job.outputs()
-    job_outputs_num_new = len(outputs_list[job_outputs_num + 1:])
+    job_outputs_num_new = len(outputs_list[job_outputs_num:])
+    res = {}
     for num in range(job_outputs_num_new):
         res = outputs_list[job_outputs_num + num]
         res = ast.literal_eval(res)
-        print('Final Stream %d: %s\n' % (num, res['response']), flush=True)
+        if verbose:
+            print('Final Stream %d: %s\n\n%s\n\n' % (num, res['response'], res), flush=True)
+        else:
+            print('Final Stream %d' % (job_outputs_num + num), flush=True)
         play_audio(res, sr=sr)
     job_outputs_num += job_outputs_num_new
     print("total job_outputs_num=%d" % job_outputs_num, flush=True)
+    check_final_res(res, base_model=base_model)
+
+    check_curl_plain_api()
+
+
+def check_final_res(res, base_model='llama'):
+    assert res['save_dict']
+    assert res['save_dict']['prompt']
+    if base_model == 'llama':
+        assert res['save_dict']['base_model'] == 'llama'
+    else:
+        assert res['save_dict']['base_model'] == 'HuggingFaceH4/zephyr-7b-beta'
+    assert res['save_dict']['where_from']
+    assert res['save_dict']['valid_key'] == 'not enforced'
+    assert res['save_dict']['h2ogpt_key'] is None
+
+    assert res['save_dict']['extra_dict']
+    if base_model == 'llama':
+        assert res['save_dict']['extra_dict']['llamacpp_dict']
+        assert res['save_dict']['extra_dict']['prompt_type'] == 'llama2'
+    else:
+        assert res['save_dict']['extra_dict']['prompt_type'] == 'zephyr'
+    assert res['save_dict']['extra_dict']['do_sample'] == False
+    assert res['save_dict']['extra_dict']['num_prompt_tokens'] > 10
+    assert res['save_dict']['extra_dict']['ntokens'] > 60
+    assert res['save_dict']['extra_dict']['tokens_persecond'] > 5
+
+
+def check_curl_plain_api():
+    # curl http://127.0.0.1:7860/api/submit_nochat_plain_api -X POST -d '{"data": ["{\"instruction_nochat\": \"Who are you?\"}"]}' -H 'Content-Type: application/json'
+    # https://curlconverter.com/
+    import requests
+
+    headers = {
+        # Already added when you pass json=
+        # 'Content-Type': 'application/json',
+    }
+
+    json_data = {
+        'data': [
+            '{"instruction_nochat": "Who are you?"}',
+        ],
+    }
+
+    response = requests.post('http://127.0.0.1:7860/api/submit_nochat_plain_api', headers=headers, json=json_data)
+    res_dict = ast.literal_eval(json.loads(response.content.decode(encoding='utf-8', errors='strict'))['data'][0])
+
+    assert 'assistant' in res_dict['response'] or 'computer program' in res_dict['response']
+    assert 'Who are you?' in res_dict['prompt_raw']
+    assert 'llama' == res_dict['save_dict']['base_model'] or 'HuggingFaceH4/zephyr-7b-beta' == res_dict['save_dict'][
+        'base_model']
+    assert 'str_plain_api' == res_dict['save_dict']['which_api']

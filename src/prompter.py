@@ -1,7 +1,8 @@
-import os
 import ast
 import time
-from enums import PromptType  # also supports imports from this file from other files
+# also supports imports from this file from other files
+from enums import PromptType, gpt_token_mapping, \
+    anthropic_mapping, google_mapping
 
 non_hf_types = ['gpt4all_llama', 'llama', 'gptj']
 
@@ -40,6 +41,7 @@ prompt_type_to_model_name = {
         'h2oai/h2ogpt-16k-codellama-34b-python',
         'h2oai/h2ogpt-32k-codellama-34b-python',
         'mistralai/Mistral-7B-v0.1',
+        'mistralai/Mixtral-8x7B-v0.1',
     ],
     'gptj': ['gptj', 'gpt4all_llama'],
     'prompt_answer': [
@@ -79,6 +81,7 @@ prompt_type_to_model_name = {
         'h2oai/h2ogpt-research-oasst1-llama-65b',
         'h2oai/h2ogpt-oasst1-falcon-40b',
         'h2oai/h2ogpt-oig-oasst1-falcon-40b',
+        'llmware/dragon-mistral-7b-v0',  # https://huggingface.co/llmware/dragon-mistral-7b-v0
     ],
     'dai_faq': [],
     'summarize': [],
@@ -93,7 +96,15 @@ prompt_type_to_model_name = {
     # "wizard2": [],
     "mptinstruct": ['mosaicml/mpt-30b-instruct', 'mosaicml/mpt-7b-instruct', 'mosaicml/mpt-30b-instruct'],
     "mptchat": ['mosaicml/mpt-7b-chat', 'mosaicml/mpt-30b-chat', 'TheBloke/mpt-30B-chat-GGML'],
-    "vicuna11": ['lmsys/vicuna-33b-v1.3', 'lmsys/vicuna-7b-v1.5', 'lmsys/vicuna-13b-v1.5', 'lmsys/vicuna-13b-v1.5-16k'],
+    "orca2": ['TheBloke/Orca-2-13B-GGUF', 'microsoft/Orca-2-13b'],
+    "vicuna11": ['lmsys/vicuna-33b-v1.3',
+                 'lmsys/vicuna-7b-v1.5',
+                 'lmsys/vicuna-13b-v1.5',  # https://huggingface.co/lmsys/vicuna-13b-v1.5/discussions/6/files
+                 'NousResearch/Nous-Capybara-34B',
+                 ],
+    "vicuna11nosys": ['lmsys/vicuna-13b-v1.5-16k',
+                      # system prompt doesn't work, no evidence was trained with it from model card.
+                      ],
     "one_shot": ['lmsys/fastchat-t5-3b-v1.0'],
     "falcon": ['tiiuae/falcon-40b-instruct', 'tiiuae/falcon-7b-instruct'],
     "llama2": [
@@ -104,7 +115,7 @@ prompt_type_to_model_name = {
         'h2oai/h2ogpt-oasst1-4096-llama2-7b',
         'h2oai/h2ogpt-oasst1-4096-llama2-13b',
         'h2oai/h2ogpt-oasst1-4096-llama2-70b',
-        'llama',
+        # 'llama',  # No longer go to llama2 prompt for any llama model, too many not llama2 and auto-detection is confusing then
         'TheBloke/Llama-2-7b-Chat-GPTQ',
         'TheBloke/Llama-2-7b-chat-fp16',
         'TheBloke/Llama-2-13b-chat-fp16',
@@ -123,13 +134,17 @@ prompt_type_to_model_name = {
         'Yukang/LongAlpaca-70B',  # or can be instruct
         'TheBloke/Llama-2-7B-Chat-GGUF',
     ],
-    "mistral": ['mistralai/Mistral-7B-Instruct-v0.1', 'TheBloke/Mistral-7B-Instruct-v0.1-GGUF'],
+    "mistral": ['mistralai/Mistral-7B-Instruct-v0.1', 'TheBloke/Mistral-7B-Instruct-v0.1-GGUF',
+                'mistralai/Mixtral-8x7B-Instruct-v0.1', 'TheBloke/Mixtral-8x7B-Instruct-v0.1-GGUF',
+                'TheBloke/Mixtral-8x7B-Instruct-v0.1-GPTQ'],
     "zephyr": ['HuggingFaceH4/zephyr-7b-alpha', 'HuggingFaceH4/zephyr-7b-beta', 'TheBloke/zephyr-7B-beta-GGUF',
                'TheBloke/zephyr-7B-beta-AWQ', 'zephyr-7b-beta.Q5_K_M.gguf'],
     "beluga": ['stabilityai/StableBeluga2', 'psmathur/orca_mini_v3_7b'],
     "wizard3nospace": ['WizardLM/WizardLM-13B-V1.2'],
     "falcon_chat": ['tiiuae/falcon-180B-chat'],
-    "xwin": ['Xwin-LM/Xwin-LM-13B-V0.1', 'TheBloke/Xwin-LM-13B-V0.1-GPTQ'],
+    "xwin": ['Xwin-LM/Xwin-LM-13B-V0.1', 'TheBloke/Xwin-LM-13B-V0.1-GPTQ', 'TheBloke/Xwin-LM-13B-v0.2-GPTQ'],
+    "xwincoder": ['Xwin-LM/XwinCoder-7B', 'Xwin-LM/XwinCoder-13B', 'Xwin-LM/XwinCoder-34B'],
+    "xwinmath": ["Xwin-LM/Xwin-Math-7B-V1.0", "Xwin-LM/Xwin-Math-70B-V1.0", "Xwin-LM/Xwin-Math-13B-V1.0"],
     "mistrallite": ['amazon/MistralLite'],
     "aquila": ['h2oai/h2ogpt-16k-aquilachat2-34b', 'BAAI/AquilaChat2-34B-16K', 'BAAI/AquilaChat2-34B-16k',
                'BAAI/AquilaChat2-7B-16K'],
@@ -141,31 +156,39 @@ prompt_type_to_model_name = {
                        'deepseek-ai/deepseek-coder-33b-instruct',
                        ],
     "open_chat": ['openchat/openchat_3.5', 'TheBloke/openchat_3.5-GPTQ', 'TheBloke/openchat_3.5-GGUF',
-                  'TheBloke/openchat_3.5-AWQ', 'TheBloke/openchat_3.5-16k-AWQ'],
-    "open_chat_correct": [],  # can be any from open_chat list, by using this prompt
+                  'TheBloke/openchat_3.5-AWQ', 'TheBloke/openchat_3.5-16k-AWQ',
+                  'openchat_3.5.Q5_K_M.gguf', 'NurtureAI/openchat_3.5-16k'],
+    "open_chat_correct": ['berkeley-nest/Starling-LM-7B-alpha', 'openchat/openchat-3.5-1210',
+                          'openchat/openchat_3.5', 'openchat/openchat_v3.2_super',
+                          ],  # can be any from open_chat list, by using this prompt
     "open_chat_code": [],  # can be any from open_chat list, by using this prompt
+    "open_chat_math": [],  # can be any from open_chat list, by using this prompt
+    "jais": ['core42/jais-30b-chat-v1'],
+    "yi": ['01-ai/Yi-34B-Chat', 'TheBloke/Yi-34B-Chat-AWQ'],
+    "docsgpt": ['Arc53/docsgpt-7b-mistral'],
     # could be plain, but default is correct prompt_type for default TheBloke model ggml-wizardLM-7B.q4_2.bin
 }
+
+anthropic_gpts = sorted(anthropic_mapping.keys())
+prompt_type_to_model_name['anthropic'] = anthropic_gpts
+
+google_gpts = sorted(google_mapping.keys())
+prompt_type_to_model_name['google'] = google_gpts
+
 model_names_curated_big = ['Yukang/LongAlpaca-70B',
                            'lmsys/vicuna-13b-v1.5-16k',
                            'h2oai/h2ogpt-32k-codellama-34b-instruct']
-model_names_curated = ['llama',
-                       'TheBloke/Xwin-LM-13B-V0.1-GPTQ',
+model_names_curated = ['TheBloke/Xwin-LM-13B-V0.1-GPTQ',
                        'TheBloke/Llama-2-7B-Chat-GGUF',
                        'HuggingFaceH4/zephyr-7b-beta',
                        'TheBloke/zephyr-7B-beta-GGUF',
                        'TheBloke/zephyr-7B-beta-AWQ'] + model_names_curated_big
-openai_gpts = ["gpt-3.5-turbo", "gpt-3.5-turbo-16k",
-               "gpt-3.5-turbo-0613", "gpt-3.5-turbo-16k-0613",
-               "gpt-4", "gpt-4-32k",
-               "gpt-4-0613", "gpt-4-32k-0613",
-               ]
-if os.getenv('OPENAI_API_KEY'):
-    prompt_type_to_model_name.update({
-        "openai": ["text-davinci-003", "text-curie-001", "text-babbage-001", "text-ada-001"],
-        "openai_chat": openai_gpts,
-    })
-    model_names_curated += ['gpt-3.5-turbo']
+openai_gpts = list(gpt_token_mapping.keys())
+prompt_type_to_model_name.update({
+    "openai": ["text-davinci-003", "text-curie-001", "text-babbage-001", "text-ada-001"],
+    "openai_chat": openai_gpts,
+})
+model_names_curated += ['gpt-3.5-turbo']
 
 inv_prompt_type_to_model_name = {v.strip(): k for k, l in prompt_type_to_model_name.items() for v in l}
 inv_prompt_type_to_model_lower = {v.strip().lower(): k for k, l in prompt_type_to_model_name.items() for v in l}
@@ -183,6 +206,7 @@ def get_prompt(prompt_type, prompt_dict, chat, context, reduced, making_context,
                system_prompt=None, histi=-1):
     prompt_dict_error = ''
     generates_leading_space = False
+    can_handle_system_prompt = False
 
     if prompt_type == PromptType.custom.name and not isinstance(prompt_dict, dict):
         try:
@@ -345,6 +369,7 @@ Current Time: {}
         botstr = PreResponse
     elif prompt_type in [PromptType.instruct_vicuna.value, str(PromptType.instruct_vicuna.value),
                          PromptType.instruct_vicuna.name]:
+        can_handle_system_prompt = True
         if system_prompt in [None, 'None', 'auto']:
             system_prompt = "A chat between a curious human and an artificial intelligence assistant. " \
                             "The assistant gives helpful, detailed, and polite answers to the human's questions."
@@ -481,6 +506,7 @@ ASSISTANT:
         botstr = PreResponse
     elif prompt_type in [PromptType.wizard2.value, str(PromptType.wizard2.value),
                          PromptType.wizard2.name]:
+        can_handle_system_prompt = True
         # https://huggingface.co/TheBloke/WizardLM-7B-uncensored-GGML
         if system_prompt in [None, 'None', 'auto']:
             system_prompt = "Below is an instruction that describes a task. Write a response that appropriately completes the request."
@@ -501,6 +527,7 @@ ASSISTANT:
     elif prompt_type in [PromptType.wizard3.value, str(PromptType.wizard3.value),
                          PromptType.wizard3.name]:
         # https://huggingface.co/TheBloke/wizardLM-13B-1.0-GGML
+        can_handle_system_prompt = True
         if system_prompt in [None, 'None', 'auto']:
             system_prompt = "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions."
         preprompt = """%s""" % system_prompt if not (chat and reduced) else ''
@@ -547,6 +574,7 @@ ASSISTANT:
         botstr = PreResponse
     elif prompt_type in [PromptType.openai.value, str(PromptType.openai.value),
                          PromptType.openai.name]:
+        can_handle_system_prompt = True
         if system_prompt in [None, 'None', 'auto']:
             system_prompt = "The following is a conversation with an AI assistant. The assistant is helpful, creative, clever, and very friendly."
         preprompt = """%s""" % system_prompt if not (chat and reduced) else ''
@@ -573,7 +601,12 @@ ASSISTANT:
         humanstr = PreInstruct
         botstr = PreResponse
     elif prompt_type in [PromptType.openai_chat.value, str(PromptType.openai_chat.value),
-                         PromptType.openai_chat.name]:
+                         PromptType.openai_chat.name] or \
+            prompt_type in [PromptType.anthropic.value, str(PromptType.anthropic.value),
+                            PromptType.anthropic.name] or \
+            prompt_type in [PromptType.google.value, str(PromptType.google.value),
+                            PromptType.google.name]:
+        can_handle_system_prompt = True  # handled via special messages/arguments not part of prompt
         # prompting and termination all handled by endpoint
         preprompt = """"""
         start = ''
@@ -586,10 +619,19 @@ ASSISTANT:
         humanstr = None
         botstr = None
     elif prompt_type in [PromptType.vicuna11.value, str(PromptType.vicuna11.value),
-                         PromptType.vicuna11.name]:
+                         PromptType.vicuna11.name] or \
+            prompt_type in [PromptType.vicuna11nosys.value, str(PromptType.vicuna11nosys.value),
+                            PromptType.vicuna11nosys.name]:
+        can_handle_system_prompt = prompt_type in [PromptType.vicuna11.value,
+                                                   str(PromptType.vicuna11.value),
+                                                   PromptType.vicuna11.name]
         if system_prompt in [None, 'None', 'auto']:
             system_prompt = "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions."
-        preprompt = """%s """ % system_prompt if not (chat and reduced) else ''
+        if not can_handle_system_prompt:
+            # totally remove system prompt stuff, maybe not always done for every model like this
+            preprompt = ""
+        else:
+            preprompt = """%s """ % system_prompt if not (chat and reduced) else ''
         start = ''
         promptB = promptA = '%s%s' % (preprompt, start)
         eos = '</s>'
@@ -611,6 +653,7 @@ ASSISTANT:
             PreResponse = PreResponse
     elif prompt_type in [PromptType.mptinstruct.value, str(PromptType.mptinstruct.value),
                          PromptType.mptinstruct.name]:
+        can_handle_system_prompt = True
         # https://huggingface.co/mosaicml/mpt-30b-instruct#formatting
         if system_prompt in [None, 'None', 'auto']:
             system_prompt = "Below is an instruction that describes a task. Write a response that appropriately completes the request."
@@ -633,9 +676,30 @@ ASSISTANT:
         botstr = PreResponse
     elif prompt_type in [PromptType.mptchat.value, str(PromptType.mptchat.value),
                          PromptType.mptchat.name]:
+        can_handle_system_prompt = True
         # https://huggingface.co/TheBloke/mpt-30B-chat-GGML#prompt-template
         if system_prompt in [None, 'None', 'auto']:
             system_prompt = "A conversation between a user and an LLM-based AI assistant. The assistant gives helpful and honest answers."
+        promptA = promptB = """<|im_start|>system\n%s\n<|im_end|>""" % system_prompt if not (chat and reduced) else ''
+
+        PreInstruct = """<|im_start|>user
+"""
+
+        PreInput = None
+
+        PreResponse = """<|im_end|><|im_start|>assistant
+"""
+        terminate_response = ['<|im_end|>']
+        chat_sep = ''
+        chat_turn_sep = '<|im_end|>'
+        humanstr = PreInstruct
+        botstr = PreResponse
+    elif prompt_type in [PromptType.orca2.value, str(PromptType.orca2.value),
+                         PromptType.orca2.name]:
+        can_handle_system_prompt = True
+        # https://huggingface.co/microsoft/Orca-2-13b#getting-started-with-orca-2
+        if system_prompt in [None, 'None', 'auto']:
+            system_prompt = "You are Orca, an AI language model created by Microsoft. You are a cautious assistant. You carefully follow instructions. You are helpful and harmless and you follow ethical guidelines and promote positive behavior."
         promptA = promptB = """<|im_start|>system\n%s\n<|im_end|>""" % system_prompt if not (chat and reduced) else ''
 
         PreInstruct = """<|im_start|>user
@@ -689,6 +753,7 @@ ASSISTANT:
         botstr = PreResponse
     elif prompt_type in [PromptType.llama2.value, str(PromptType.llama2.value),
                          PromptType.llama2.name]:
+        can_handle_system_prompt = True
         if system_prompt in [None, 'None', 'auto']:
             # automatic
             system_prompt = """You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe. Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.\n\nIf a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information."""
@@ -715,6 +780,7 @@ ASSISTANT:
             PreResponse += " "
     elif prompt_type in [PromptType.beluga.value, str(PromptType.beluga.value),
                          PromptType.beluga.name]:
+        can_handle_system_prompt = True
         if system_prompt in [None, 'None', 'auto']:
             # automatic
             system_prompt = "You are Stable Beluga, an AI that follows instructions extremely well. Help as much as you can. Remember, be safe, and don't do anything illegal."
@@ -779,6 +845,7 @@ Remember to tailor the activities to the birthday child's interests and preferen
         botstr = PreResponse
     elif prompt_type in [PromptType.falcon_chat.value, str(PromptType.falcon_chat.value),
                          PromptType.falcon_chat.name]:
+        can_handle_system_prompt = True
         if system_prompt in [None, 'None', 'auto']:
             # automatic
             system_prompt = "You are an intelligent and helpful assistant."
@@ -817,8 +884,9 @@ Remember to tailor the activities to the birthday child's interests and preferen
         botstr = '[/INST]'
         if making_context:
             PreResponse += ""
-    elif prompt_type in [PromptType.zephyr.value, str(PromptType.zephyr.value),
-                         PromptType.zephyr.name]:
+    elif prompt_type in [PromptType.zephyr0.value, str(PromptType.zephyr0.value),
+                         PromptType.zephyr0.name]:
+        can_handle_system_prompt = True
         # https://huggingface.co/HuggingFaceH4/zephyr-7b-alpha#intended-uses--limitations
         # prompt_template = "<|system|>\n</s>\n<|user|>\n{query}</s>\n<|assistant|>\n"
         if system_prompt in [None, 'None', 'auto']:
@@ -841,8 +909,35 @@ Remember to tailor the activities to the birthday child's interests and preferen
         chat_turn_sep = '</s>\n'
         humanstr = '<|user|>'
         botstr = '<|assistant|>'
+    elif prompt_type in [PromptType.zephyr.value, str(PromptType.zephyr.value),
+                         PromptType.zephyr.name]:
+        can_handle_system_prompt = True
+        # fixed version of zephyr0, and passes tests, but doesn't take system prompt as well
+        # https://huggingface.co/HuggingFaceH4/zephyr-7b-alpha#intended-uses--limitations
+        # prompt_template = "<|system|>\n</s>\n<|user|>\n{query}</s>\n<|assistant|>\n"
+        if system_prompt in [None, 'None', 'auto']:
+            # automatic
+            system_prompt = "You are an AI that follows instructions extremely well and as helpful as possible."
+        if system_prompt:
+            sys_msg = """<|system|>\n%s</s>\n""" % system_prompt
+        else:
+            sys_msg = ''
+        if sys_msg and not (chat and reduced):
+            # too much safety, hurts accuracy
+            promptA = promptB = sys_msg
+        else:
+            promptA = promptB = ''
+        PreInput = None
+        PreInstruct = "<|user|>\n"
+        PreResponse = "</s>\n<|assistant|>\n"
+        terminate_response = ['<|assistant|>', "</s>"]
+        chat_sep = ''
+        chat_turn_sep = '</s>\n'
+        humanstr = '<|user|>'
+        botstr = '<|assistant|>'
     elif prompt_type in [PromptType.xwin.value, str(PromptType.xwin.value),
                          PromptType.xwin.name]:
+        can_handle_system_prompt = True
         # https://huggingface.co/Xwin-LM/Xwin-LM-13B-V0.1#huggingface-example
         if system_prompt in [None, 'None', 'auto']:
             system_prompt = "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions."
@@ -860,8 +955,49 @@ Remember to tailor the activities to the birthday child's interests and preferen
         botstr = PreResponse
         if making_context:
             PreResponse = botstr + ' '
+    elif prompt_type in [PromptType.xwincoder.value, str(PromptType.xwincoder.value),
+                         PromptType.xwincoder.name]:
+        can_handle_system_prompt = True
+        # https://github.com/Xwin-LM/Xwin-LM/blob/main/Xwin-Coder/online_chat.py#L38-L48
+        if system_prompt in [None, 'None', 'auto']:
+            system_prompt = "You are an AI coding assistant that helps people with programming. Write a response that appropriately completes the user's request.\n"
+        # space below intended
+        preprompt = """<system>: %s\n""" % system_prompt if not (chat and reduced) else ''
+        start = ''
+        promptB = promptA = '%s%s' % (preprompt, start)
+        PreInstruct = """<user>: """
+        PreInput = None
+        PreResponse = """<AI>:"""
+        terminate_response = [PreResponse, '<AI>:', '</s>']
+        chat_turn_sep = '\n'  # docs say multi-turn uses </s> but doesn't work, so use huggingface/vllm example
+        chat_sep = '\n'  # docs say multi-turn uses ' ' but doesn't work,  so use huggingface/vllm example
+        humanstr = PreInstruct
+        botstr = PreResponse
+        if making_context:
+            PreResponse = botstr + ' '
+    elif prompt_type in [PromptType.xwinmath.value, str(PromptType.xwinmath.value),
+                         PromptType.xwinmath.name]:
+        can_handle_system_prompt = True
+        # https://huggingface.co/Xwin-LM/Xwin-Math-70B-V1.0#generate
+        if system_prompt in [None, 'None', 'auto']:
+            system_prompt = "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions."
+        # space below intended
+        preprompt = """%s """ % system_prompt if not (chat and reduced) else ''
+        start = ''
+        promptB = promptA = '%s%s' % (preprompt, start)
+        PreInstruct = """USER: """
+        PreInput = None
+        PreResponse = """Give your solution in detail. In the end, write your final answer in the format of 'The answer is: <ANSWER>.'. ASSISTANT:"""
+        terminate_response = [PreResponse, 'ASSISTANT:', '</s>']
+        chat_turn_sep = '\n'  # docs say multi-turn uses </s> but doesn't work, so use huggingface/vllm example
+        chat_sep = '\n'  # docs say multi-turn uses ' ' but doesn't work,  so use huggingface/vllm example
+        humanstr = PreInstruct
+        botstr = PreResponse
+        if making_context:
+            PreResponse = botstr + ' '
     elif prompt_type in [PromptType.mistralgerman.value, str(PromptType.mistralgerman.value),
                          PromptType.mistralgerman.name]:
+        can_handle_system_prompt = True
         # https://huggingface.co/TheBloke/em_german_leo_mistral-GPTQ#prompt-template-emgerman
         if system_prompt in [None, 'None', 'auto']:
             system_prompt = "Du bist ein hilfreicher"
@@ -899,6 +1035,7 @@ Remember to tailor the activities to the birthday child's interests and preferen
         chat_turn_sep = chat_sep = eos
     elif prompt_type in [PromptType.aquila.value, str(PromptType.aquila.value),
                          PromptType.aquila.name]:
+        can_handle_system_prompt = True
         # https://huggingface.co/BAAI/AquilaChat2-34B-16K/blob/main/predict.py#L197-L210
         if system_prompt in [None, 'None', 'auto']:
             system_prompt = "A chat between a curious human and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the human's questions."
@@ -918,6 +1055,7 @@ Remember to tailor the activities to the birthday child's interests and preferen
             PreResponse = botstr + ' '
     elif prompt_type in [PromptType.aquila_simple.value, str(PromptType.aquila_simple.value),
                          PromptType.aquila_simple.name]:
+        can_handle_system_prompt = True
         # like aquila but less strictly correct (but less complex) for multi-turn
         if system_prompt in [None, 'None', 'auto']:
             system_prompt = "A chat between a curious human and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the human's questions."
@@ -937,6 +1075,7 @@ Remember to tailor the activities to the birthday child's interests and preferen
             PreResponse = botstr + ''
     elif prompt_type in [PromptType.aquila_legacy.value, str(PromptType.aquila_legacy.value),
                          PromptType.aquila_legacy.name]:
+        can_handle_system_prompt = True
         if system_prompt in [None, 'None', 'auto']:
             system_prompt = "A chat between a curious human and an artificial intelligence assistant. " \
                             "The assistant gives helpful, detailed, and polite answers to the human's questions.\n\n"
@@ -972,15 +1111,16 @@ Remember to tailor the activities to the birthday child's interests and preferen
             PreResponse = botstr + ''
     elif prompt_type in [PromptType.deepseek_coder.value, str(PromptType.deepseek_coder.value),
                          PromptType.deepseek_coder.name]:
+        can_handle_system_prompt = True
         # https://huggingface.co/deepseek-ai/deepseek-coder-33b-instruct
         if system_prompt in [None, 'None', 'auto']:
-            system_prompt = "You are an AI programming assistant, utilizing the Deepseek Coder model, developed by Deepseek Company, and you only answer questions related to computer science. For politically sensitive questions, security and privacy issues, and other non-computer science questions, you will refuse to answer.\n"
+            system_prompt = "<｜begin▁of▁sentence｜>You are an AI programming assistant, utilizing the Deepseek Coder model, developed by Deepseek Company, and you only answer questions related to computer science. For politically sensitive questions, security and privacy issues, and other non-computer science questions, you will refuse to answer\n"
         promptA = promptB = "%s" % system_prompt if not (chat and reduced) else ''
         PreInput = None
         PreInstruct = "### Instruction:\n"
         PreResponse = "### Response:\n"
         eos = '<｜end▁of▁sentence｜>'
-        terminate_response = [PreResponse, eos]
+        terminate_response = [PreResponse, eos, '<|EOT|>']
         chat_sep = '\n'
         chat_turn_sep = '\n<|EOT|>\n'
         humanstr = PreInstruct
@@ -990,9 +1130,11 @@ Remember to tailor the activities to the birthday child's interests and preferen
     elif prompt_type in [PromptType.open_chat.value, str(PromptType.open_chat.value),
                          PromptType.open_chat.name] or \
             prompt_type in [PromptType.open_chat_correct.value, str(PromptType.open_chat_correct.value),
-                         PromptType.open_chat_correct.name] or \
+                            PromptType.open_chat_correct.name] or \
             prompt_type in [PromptType.open_chat_code.value, str(PromptType.open_chat_code.value),
-                         PromptType.open_chat_code.name]:
+                            PromptType.open_chat_code.name] or \
+            prompt_type in [PromptType.open_chat_math.value, str(PromptType.open_chat_math.value),
+                            PromptType.open_chat_math.name]:
         # https://huggingface.co/TheBloke/openchat_3.5-GPTQ#prompt-template-openchat
         # https://github.com/imoneoi/openchat/tree/master#-inference-with-transformers
         # GPT4 Correct User: Hello<|end_of_turn|>GPT4 Correct Assistant: Hi<|end_of_turn|>GPT4 Correct User: How are you today?<|end_of_turn|>GPT4 Correct Assistant:
@@ -1002,13 +1144,17 @@ Remember to tailor the activities to the birthday child's interests and preferen
         promptA = promptB = ""  # no apparent system prompt
         PreInput = None
         if prompt_type in [PromptType.open_chat.value, str(PromptType.open_chat.value),
-                         PromptType.open_chat.name]:
+                           PromptType.open_chat.name]:
             PreInstruct = "GPT4 User: "
             PreResponse = "GPT4 Assistant:"
         elif prompt_type in [PromptType.open_chat_correct.value, str(PromptType.open_chat_correct.value),
-                         PromptType.open_chat_correct.name]:
+                             PromptType.open_chat_correct.name]:
             PreInstruct = "GPT4 Correct User: "
             PreResponse = "GPT4 Correct Assistant:"
+        elif prompt_type in [PromptType.open_chat_math.value, str(PromptType.open_chat_math.value),
+                             PromptType.open_chat_math.name]:
+            PreInstruct = "Math Correct User: "
+            PreResponse = "Math Correct Assistant:"
         else:
             PreInstruct = "Code User: "
             PreResponse = "Code Assistant:"
@@ -1020,6 +1166,57 @@ Remember to tailor the activities to the birthday child's interests and preferen
         botstr = PreResponse
         if making_context:
             PreResponse += " "
+    elif prompt_type in [PromptType.jais.value, str(PromptType.jais.value),
+                         PromptType.jais.name]:
+        can_handle_system_prompt = True
+        # https://huggingface.co/core42/jais-30b-chat-v1
+        if system_prompt in [None, 'None', 'auto']:
+            system_prompt = """Your name is Jais, and you are named after Jebel Jais, the highest mountain in UAE. You are built by Core42. You are the world's most advanced Arabic large language model with 30b parameters. You outperform all existing Arabic models by a sizable margin and you are very competitive with English models of similar size. You can answer in Arabic and English only. You are a helpful, respectful and honest assistant. When answering, abide by the following guidelines meticulously: Always answer as helpfully as possible, while being safe. Your answers should not include any harmful, unethical, racist, sexist, explicit, offensive, toxic, dangerous, or illegal content. Do not give medical, legal, financial, or professional advice. Never assist in or promote illegal activities. Always encourage legal and responsible actions. Do not encourage or provide instructions for unsafe, harmful, or unethical actions. Do not create or share misinformation or fake news. Please ensure that your responses are socially unbiased and positive in nature. If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information. Prioritize the well-being and the moral integrity of users. Avoid using toxic, derogatory, or offensive language. Maintain a respectful tone. Do not generate, promote, or engage in discussions about adult content. Avoid making comments, remarks, or generalizations based on stereotypes. Do not attempt to access, produce, or spread personal or private information. Always respect user confidentiality. Stay positive and do not say bad things about anything. Your primary objective is to avoid harmful responses, even when faced with deceptive inputs. Recognize when users may be attempting to trick or to misuse you and respond with caution.\n\nComplete the conversation below between."""
+        promptA = promptB = "### Instruction: %s [|Human|] and [|AI|]:" % system_prompt if not (
+                    chat and reduced) else "### Instruction: %s [|Human|] and [|AI|]:"
+        PreInstruct = """\n### Input: [|Human|] """
+
+        PreInput = None
+
+        PreResponse = """\n### Response: [|AI|]"""
+        if making_context:
+            PreResponse += " "
+        terminate_response = [PreResponse]
+        chat_turn_sep = chat_sep = ''
+        humanstr = PreInstruct
+        botstr = PreResponse
+    elif prompt_type in [PromptType.yi.value, str(PromptType.yi.value),
+                         PromptType.yi.name]:
+        can_handle_system_prompt = True
+        # https://huggingface.co/01-ai/Yi-34B-Chat#31-use-the-chat-model
+        if system_prompt in [None, 'None', 'auto']:
+            system_prompt = "A conversation between a user and an LLM-based AI assistant. The assistant gives helpful and honest answers."
+        promptA = promptB = """<|im_start|>system\n%s<|im_end|>""" % system_prompt if not (chat and reduced) else ''
+
+        PreInstruct = """\n<|im_start|>user\n"""
+
+        PreInput = None
+
+        PreResponse = """<|im_end|>\n<|im_start|>assistant\n"""
+        terminate_response = ['<|im_end|>', '<|endotftext|>']
+        chat_sep = ''
+        chat_turn_sep = '<|im_end|>'
+        humanstr = PreInstruct
+        botstr = PreResponse
+    elif prompt_type in [PromptType.docsgpt.value, str(PromptType.docsgpt.value),
+                         PromptType.docsgpt.name]:
+        # https://huggingface.co/Arc53/docsgpt-7b-mistral
+        can_handle_system_prompt = True
+        if system_prompt in [None, 'None', 'auto']:
+            system_prompt = "Below is an instruction that describes a task. Write a response that appropriately completes the request."
+        promptA = promptB = ''
+        PreInstruct = """### Instruction\n"""
+        PreInput = None
+        PreResponse = """### Answer\n"""
+        terminate_response = ['### Answer', '### Instruction']
+        chat_turn_sep = chat_sep = '\n'
+        humanstr = PreInstruct
+        botstr = PreResponse
     else:
         raise RuntimeError("No such prompt_type=%s" % prompt_type)
 
@@ -1031,7 +1228,9 @@ Remember to tailor the activities to the birthday child's interests and preferen
                     chat_turn_sep=chat_turn_sep,
                     humanstr=humanstr, botstr=botstr,
                     generates_leading_space=generates_leading_space,
-                    system_prompt=system_prompt)
+                    system_prompt=system_prompt,
+                    can_handle_system_prompt=can_handle_system_prompt,
+                    )
 
     if return_dict:
         return ret_dict, prompt_dict_error
@@ -1052,10 +1251,11 @@ def generate_prompt(data_point, prompt_type, prompt_dict, chat, reduced, making_
     assert prompt_type in prompt_types, "Bad prompt type: %s" % prompt_type
     promptA, promptB, PreInstruct, PreInput, PreResponse, \
         terminate_response, chat_sep, chat_turn_sep, humanstr, botstr, \
-        generates_leading_space, system_prompt = get_prompt(prompt_type, prompt_dict, chat,
-                                                            context, reduced, making_context,
-                                                            system_prompt=system_prompt,
-                                                            histi=histi)
+        generates_leading_space, system_prompt, can_handle_system_prompt = \
+        get_prompt(prompt_type, prompt_dict, chat,
+                   context, reduced, making_context,
+                   system_prompt=system_prompt,
+                   histi=histi)
 
     # could avoid if reduce=True, but too complex for parent functions to handle
     prompt = context
@@ -1135,7 +1335,7 @@ class Prompter(object):
         making_context = False  # not for chat context
         self.promptA, self.promptB, self.PreInstruct, self.PreInput, self.PreResponse, \
             self.terminate_response, self.chat_sep, self.chat_turn_sep, self.humanstr, self.botstr, \
-            self.generates_leading_space, self.system_prompt = \
+            self.generates_leading_space, self.system_prompt, self.can_handle_system_prompt = \
             get_prompt(self.prompt_type, self.prompt_dict, chat, context, reduced, making_context,
                        system_prompt=system_prompt)
         self.pre_response = self.PreResponse
@@ -1174,7 +1374,8 @@ class Prompter(object):
         self.prompt = prompt
         return prompt
 
-    def get_response(self, outputs, prompt=None, sanitize_bot_response=False, only_new_text=False):
+    def get_response(self, outputs, prompt=None, sanitize_bot_response=False, only_new_text=False,
+                     plain_prompt_special=False):
         if isinstance(outputs, str):
             outputs = [outputs]
         if self.debug:
@@ -1187,8 +1388,9 @@ class Prompter(object):
             for word in meaningless_words:
                 response = response.replace(word, "")
             if sanitize_bot_response:
-                from better_profanity import profanity
-                response = profanity.censor(response)
+                # from better_profanity import profanity
+                # response = profanity.censor(response)
+                pass
             if self.generates_leading_space and isinstance(response, str) and len(response) > 0 and response[0] == ' ':
                 response = response[1:]
             return response
@@ -1206,7 +1408,8 @@ class Prompter(object):
         multi_output = len(outputs) > 1
 
         for oi, output in enumerate(outputs):
-            if self.prompt_type in [PromptType.plain.value, str(PromptType.plain.value), PromptType.plain.name]:
+            if plain_prompt_special and \
+                    self.prompt_type in [PromptType.plain.value, str(PromptType.plain.value), PromptType.plain.name]:
                 output = clean_response(output)
                 allow_terminate = True
             elif only_new_text:
@@ -1279,6 +1482,14 @@ class Prompter(object):
         if prompt_type1 == 'human_bot':
             # hack bug in vLLM with stopping, stops right, but doesn't return last token
             hfix = '<human'
+            if text1.endswith(hfix):
+                text1 = text1[:-len(hfix)]
+            hfix = '<bot'
+            if text1.endswith(hfix):
+                text1 = text1[:-len(hfix)]
+        if prompt_type1 == 'docsgpt':
+            # hack bug in vLLM with stopping, stops right, but doesn't return last token
+            hfix = '### Inst'
             if text1.endswith(hfix):
                 text1 = text1[:-len(hfix)]
         return text1
@@ -1359,8 +1570,17 @@ def step_back_prompts(which):
         return f"""You are a mathematician or physicist.  {gen1}"""
     elif which == 2:
         return f"""You are a mathematician or physicist.  {gen2}"""
-    elif which == 2:
+    elif which == 3:
         return f"""You are a very helpful expert at the topic of the question.  {gen3}"""
 
     else:
         raise ValueError("No such case for back prompts which=%d" % which)
+
+
+def get_stop_token_ids(tokenizer, stop_sequences=[]):
+    stop_token_ids = [tokenizer.added_tokens_encoder[x] for x in stop_sequences if
+                      hasattr(tokenizer, 'added_tokens_encoder') and x in tokenizer.added_tokens_encoder]
+    if hasattr(tokenizer, 'eos_token_id'):
+        stop_token_ids.extend([tokenizer.eos_token_id])
+    stop_token_ids_dict = dict(stop_token_ids=stop_token_ids)
+    return stop_token_ids_dict

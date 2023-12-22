@@ -1,5 +1,110 @@
 ## Frequently asked questions
 
+### Mixtral GGUF
+
+Here is how to get Mixtral GGUF going with h2oGPT with no update to llama cpp python package except in a PR.
+
+```bash
+pip uninstall llama_cpp_python
+pip uninstall llama_cpp_python_cuda
+git clone --recurse-submodules https://github.com/abetlen/llama-cpp-python.git
+cd llama-cpp-python/
+git fetch origin pull/1007/head:1007
+git switch 1007
+git submodule update --remote
+git submodule update
+CMAKE_ARGS="-DLLAMA_CUBLAS=on" pip install -e .
+cd ~/h2ogpt/
+python generate.py --base-model=TheBloke/Mixtral-8x7B-Instruct-v0.1-GGUF --prompt_type=mistral --max_seq_len=4096
+```
+Downloads 31GB GGUF file.  Good to pass `--max_seq_len` to avoid relaunch of model to find automatically the size, since uses more memory.  Also, if use automatic setting, h2oGPT says auto-context set at 4096 instead of up to `--max_seq_len=32768`.
+
+Use appropriate `CMAKE_ARGS` [instructions](https://github.com/abetlen/llama-cpp-python#installation) for building on MAC/CPU/etc.
+
+Set `CUDA_VISIBLE_DEVICES=0` to run on single 48GB GPU for maximum speed, or set to more GPUs if required. Model without usage consumes about 36GB, but uses 40GB after simple usage.
+
+NOTE: For long-context input or large max_seq_len, Mixtral GGUF seems unstable at moment.  Even just starting model with 32k context using 2*48 GPUs.  So expect llama.cpp to have more bug fixes.  We have not seen Mixtral work on llama.cpp for more than `--max_seq_len=4096`.
+
+### Video Extraction (experimental)
+
+Ways to get Audio (ASR) and Video extraction:
+* Add YouTube link to Ask Anything and click Ingest
+* Upload video file clicking Upload and selecting your video
+
+By default, image frames are extracted as a separate document, so when viewed in document viewer, the images are shown.  If you prefer them under the same document, set env `FRAMES_AS_SAME_DOC=1`.
+
+If you prefer to disable video extraction, choose `--extract_frames=0` with CLI or pick 0 in Document Control in expert settings in UI.
+
+### Image Generation (experimental)
+
+For image generation, then run:
+```bash
+python --base_model=HuggingFaceH4/zephyr-7b-beta --score_model=None --enable_imagegen=True
+```
+or for high-resolution run use `--enable_imagegen_high=True` (can add both).
+
+### LLaVa Vision Models (experimental)
+
+https://github.com/haotian-liu/LLaVA
+
+Use separate env for workers and server
+```bash
+export CUDA_HOME=/usr/local/cuda-11.8
+export PIP_EXTRA_INDEX_URL="https://download.pytorch.org/whl/cu118"
+
+conda create -n llava python=3.10 -y
+conda activate llava
+pip install --upgrade pip  # enable PEP 660 support
+
+# git clone https://github.com/haotian-liu/LLaVA.git
+git clone https://github.com/h2oai/LLaVA.git h2oai_llava
+cd h2oai_llava
+
+pip install -e .
+pip install -e ".[train]"
+pip install flash-attn --no-build-isolation
+```
+
+Run controller:
+```bash
+export server_port=10000
+python -m llava.serve.controller --host 0.0.0.0 --port $server_port
+```
+
+Run a worker
+```bash
+worker_port=40000
+python -m llava.serve.model_worker --host 0.0.0.0 --controller http://localhost:$server_port --port $worker_port --worker http://localhost:$worker_port --model-path liuhaotian/llava-v1.5-13b
+```
+
+Can run multiple workers if put on different ports, e.g. for  more verbose output (but not necessarily technically better), run:
+```bash
+git clone https://github.com/qnguyen3/hermes-llava.git
+cd hermes-llava
+conda create -n llava_hermes python=3.10 -y
+conda activate llava_hermes
+pip install --upgrade pip  # enable PEP 660 support
+pip install -e .
+pip install -e ".[train]"
+pip install flash-attn --no-build-isolation
+pip install transformers==4.34.1
+
+worker_port=40001
+python -m llava.serve.model_worker --host 0.0.0.0 --controller http://localhost:$server_port --port $worker_port --worker http://localhost:$worker_port --model-path NousResearch/Nous-Hermes-2-Vision
+````
+
+Run server:
+```bash
+pip install gradio==3.50.2
+python -m llava.serve.gradio_web_server --controller http://localhost:$server_port --model-list-mode reload
+```
+
+Run h2oGPT with LLaVa and image (normal and high-quality) generation:
+```bash
+python --base_model=HuggingFaceH4/zephyr-7b-beta --score_model=None --llava_model=<IP:port:model_name> --enable_imagegen=True --enable_imagegen_high=True
+```
+e.g. `--llava_model=http://192.168.1.46:7861:llava-v1.5-13b`.
+
 ### Speech-to-Text (STT) and Text-to_Speech (TTS)
 
 To disable STT and TTS, pass `--enable_tts=False --enable_stt=False` to `generate.py`.  Note that STT and TTS models are always preloaded if not disabled, so GPU memory is used if do not disable them.
@@ -64,6 +169,18 @@ There is currently no TTS for CLI.
 In the expert panel you can replay any h2oGPT generation or speak instruction generation.
 
 If you want to stop generation of speech, click "Stop" in top-right to stop generation of text and speech, or click "Stop/Clear Speak" to stop speech when having clicked on "Speak Instruction" and "Speak Response".
+
+### Automatic Speech Recognition (ASR)
+
+ASR is handled with whisper type models for ingesting YouTube videos or other videos.
+
+For Twitter, one can right-click on Twitter video, copy video address, then paste into [TwitterVideoDownloader.com](https://twitter.com/i/status/1732448989336006826) and download the video, right-click on that video and click save as, then upload to h2oGPT.
+
+### Faster ASR
+
+For fast performance, one can use `distil-whisper/distil-large-v2` as the model, which is about 10x faster for similar accuracy.
+
+In addition, faster_whisper package can be used if using large v2 or v3, which is about 4x faster and 2x less memory for similar accuracy.
 
 ### Voice Cloning
 
@@ -217,7 +334,7 @@ As listed in the `src/gen.py` file, there are many ways to control authorization
 *  :param auth: gradio auth for launcher in form [(user1, pass1), (user2, pass2), ...]
     * e.g. --auth=[('jon','password')] with no spaces
     * e.g. --auth="[('jon', 'password)())(')]" so any special characters can be used
-    * e.g. --auth=auth.json to specify persisted state file with name auth.json (auth_filename then not required)
+    * e.g. --auth=auth.json to specify persisted state file with name auth.json (auth_filename then not required),
     * e.g. --auth='' will use default auth.json as file name for persisted state file (auth_filename then not required)
     * e.g. --auth=None will use no auth, but still keep track of auth state, just not from logins
 *    :param auth_filename:
@@ -229,6 +346,70 @@ As listed in the `src/gen.py` file, there are many ways to control authorization
 *   :param auth_message: Message to show if having users login, fixed if passed, else dynamic internally
 *   :param guest_name: guess name if using auth and have open access.
     * If '', then no guest allowed even if open access, then all databases for each user always persisted
+
+The file format for `auth.json` in basic form is:
+```json
+{
+  "user1": {
+    "userid": "any_unique_value",
+    "password": "login_password",
+  },
+  "user2": {
+    "userid": "any_unique_value",
+    "password": "login_password",
+  },
+}
+```
+while more generally it is updated by h2oGPT to contain other entries, for example for single user `username`:
+```json
+  "username": {
+    "password": "username",
+    "userid": "9078ac9c-8ccf-481a-8de3-d6ccd21fd1c3",
+    "selection_docs_state": {
+      "langchain_modes": [
+        "UserData",
+        "MyData",
+        "LLM",
+        "Disabled"
+      ],
+      "langchain_mode_paths": {
+        "UserData": null
+      },
+      "langchain_mode_types": {
+        "UserData": "shared",
+        "github h2oGPT": "shared",
+        "DriverlessAI docs": "shared",
+        "wiki": "shared",
+        "wiki_full": "",
+        "MyData": "personal",
+        "LLM": "either",
+        "Disabled": "either"
+      }
+    },
+    "chat_state": {
+      "Say a color": [
+        [],
+        [],
+        [
+          [
+            "Say a color",
+            "I do not have the ability to speak, but I can tell you that a color is a hue, tone, or shade that is perceived by the human eye and identified by a name. Some common colors include red, orange, yellow, green, blue, indigo, and violet."
+          ]
+        ]
+      ]
+    },
+    "text_outputs": [
+      [
+        [
+          [
+            "Say a color",
+            "I do not have the ability to speak, but I can tell you that a color is a hue, tone, or shade that is perceived by the human eye and identified by a name. Some common colors include red, orange, yellow, green, blue, indigo, and violet."
+          ]
+        ]
+      ]
+    ]
+  }
+```
 
 ### HTTPS access for server and client
 
@@ -393,7 +574,7 @@ python generate.py --base_model=HuggingFaceH4/zephyr-7b-beta
 python generate.py --base_model=TheBloke/zephyr-7B-beta-GGUF
 python generate.py --base_model=TheBloke/zephyr-7B-beta-AWQ
 python generate.py --base_model=zephyr-7b-beta.Q5_K_M.gguf
-python generate.py --base_model=https://huggingface.co/TheBloke/Llama-2-7b-Chat-GGUF/resolve/main/llama-2-7b-chat.Q6_K.gguf
+python generate.py --base_model=https://huggingface.co/TheBloke/Llama-2-7b-Chat-GGUF/resolve/main/llama-2-7b-chat.Q6_K.gguf?download=true
 ```
 Some are these are non-quantized models with links HF links, some specific files on local disk ending in `.gguf`.  Given `TheBloke` HF names, if a quantized model, h2oGPT pulls the recommended model from his repository.  You can also provide a resolved web link directly, or a file.
 
@@ -415,6 +596,12 @@ and in some cases one has to disable certain features that are not automatically
 ```bash
 CUDA_VISIBLE_DEVICES=0 python generate.py --base_model=TheBloke/Xwin-LM-13B-v0.2-GPTQ --load_gptq=model --use_safetensors=True --prompt_type=xwin --langchain_mode=UserData --score_model=None --share=False --gradio_offline_level=1 --gptq_dict="{'disable_exllama': True}"
 ```
+
+For Mixtral on 4 A6000 uses about 8-11GB per GPU:
+```bash
+python generate.py --base_model=TheBloke/Mixtral-8x7B-Instruct-v0.1-GPTQ --prompt_type=mistral --use_gpu_id=False --score_model=None --use_autogptq=True --load_gptq=model --use_safetensors=True
+```
+NOTE: After quantization report, it takes about 4 minutes on fast system to fully load for whatever reason, without any change to GPU or CPU memory usage.
 
 For AutoGPTQ and other models, h2oGPT tries to automatically handle models needing certain exllama options.
 
@@ -440,6 +627,13 @@ python generate.py --base_model=llama --prompt_type=mistral --model_path_llama=h
 ```
 
 [Similar versions of this package](https://github.com/jllllll/llama-cpp-python-cuBLAS-wheels/releases) also give support for Windows, AMD, Metal, CPU with various AVX choices, GPU, etc.
+
+If you see:
+```text
+CUDA error 704 at /home/runner/work/llama-cpp-python-cuBLAS-wheels/llama-cpp-python-cuBLAS-wheels/vendor/llama.cpp/ggml-cuda.cu:6998: peer access is already enabled
+current device: 0
+```
+This is known bug in `llama.cpp` for some multi-GPU systems.  Only work-around is to restrict to single GPU by adding `export CUDA_VISIBLE_DEVICES=0` or similar value.
 
 #### GGML
 
@@ -478,14 +672,13 @@ Exllama is supported using `load_exllama` bool, with additional control using `e
 
 Attention sinks is supported, like:
 ```bash
-pip install git+https://github.com/tomaarsen/attention_sinks.git
-python generate.py --base_model=mistralai/Mistral-7B-Instruct-v0.1 --score_model=None --attention_sinks=True --max_new_tokens=100000 --max_max_new_tokens=100000 --top_k_docs=-1 --use_gpu_id=False --max_seq_len=4096 --sink_dict="{'attention_sink_size': 4, 'attention_sink_window_size': 4096}"
+python generate.py --base_model=mistralai/Mistral-7B-Instruct-v0.1 --score_model=None --attention_sinks=True --max_new_tokens=100000 --max_max_new_tokens=100000 --top_k_docs=-1 --use_gpu_id=False --max_seq_len=4096 --sink_dict="{'num_sink_tokens': 4, 'window_length': 4096}"
 ```
-where the attention sink window has to be larger than any prompt input else failures will occur.  If one sets `max_input_tokens` then this will restrict the input tokens and that can be set to same value as `attention_sink_window_size`.
+where the attention sink window has to be larger than any prompt input else failures will occur.  If one sets `max_input_tokens` then this will restrict the input tokens and that can be set to same value as `window_length`.
 
 One can increase `--max_seq_len=4096` for Mistral up to maximum of `32768` if GPU has enough memory, or reduce to lower memory needs from input itself, but still get efficient generation of new tokens "without limit".  E.g.
 ```bash
---base_model=mistralai/Mistral-7B-Instruct-v0.1 --score_model=None --attention_sinks=True --max_new_tokens=100000 --max_max_new_tokens=100000 --top_k_docs=-1 --use_gpu_id=False --max_seq_len=8192 --sink_dict="{'attention_sink_size': 4, 'attention_sink_window_size': 8192}"
+--base_model=mistralai/Mistral-7B-Instruct-v0.1 --score_model=None --attention_sinks=True --max_new_tokens=100000 --max_max_new_tokens=100000 --top_k_docs=-1 --use_gpu_id=False --max_seq_len=8192 --sink_dict="{'num_sink_tokens': 4, 'window_length': 8192}"
 ```
 
 One can also set `--min_new_tokens` on CLI or in UI to some larger value, but this is risky as it ignores end of sentence token and may do poorly after.  Better to improve prompt, and this is most useful when already consumed context with input from documents (e.g. `top_k_docs=-1`) and still want long generation.  Attention sinks is not yet supported for llama.cpp type models or vLLM/TGI inference servers.
@@ -525,6 +718,14 @@ However, in some cases, you need to add a new prompt structure because the model
     botstr
     ```
     Note that it is often the case that `humanstr` equals `PreInstruct` and `botstr` equals `PreResponse`. If this is the case, then you only have to set two keys.
+
+For example, suppose one did not have the `open_chat` prompt yet in h2oGPT, then one would run:
+```bash
+python generate.py --base_model=TheBloke/openchat_3.5-GGUF --prompt_type=custom --prompt_dict="{'promptA': '', 'promptB': '', 'PreInstruct': 'GPT4 User: ', 'PreInput': None, 'PreResponse': 'GPT4 Assistant:', 'terminate_response': ['GPT4 Assistant:', '<|end_of_turn|>'], 'chat_sep': '<|end_of_turn|>', 'chat_turn_sep': '<|end_of_turn|>', 'humanstr': 'GPT4 User: ', 'botstr': 'GPT4 Assistant:', 'generates_leading_space': False, 'system_prompt': ''}"
+```
+This generates the correct responses, etc.  The string added in the above is in double quotes as required when passing a dict or list with spaces.  And all internal quotes are single quotes.
+
+If there is a similar prompt or one wants to see how a model prompt template looks like, you can run the model and then go to the UI in models and select right sidebar, then select `Current or Custom Model Prompt` then copy the text within `Current Prompt (or Custom)`.  This can be pasted directly into the double quotes like in the above run example, or edited as required for a new model.
 
 * **Option 2**: Tweak or Edit code
 
@@ -579,6 +780,16 @@ This section describes how to add a new embedding model.
   ```bash
   python generate.py --base_model=h2oai/h2ogpt-4096-llama2-13b-chat  --score_model=None --langchain_mode='UserData' --user_path=user_path --use_auth_token=True --hf_embedding_model=BAAI/bge-large-en --cut_distance=1000000
   ```
+
+### System Prompting
+
+Some models explicitly take a system prompt (in the raw prompt or via some chat API).  However, some models have no system prompt, in which case by default with `--allow_chat_system_prompt=True`, we fill conversation history with a [prompt-response pair](../src/enums.py) for `user_prompt_for_fake_system_prompt` to replace the system_prompt, which often works well.
+
+For most models, one can speak for model, i.e. `I am a chatbot who can't help but talk about cars every time I speak.`, instead of `You ...`, even if often model card's (like for `zephyr`) give example as `You ...`.
+
+However, models vary quite a bit in whether or how they respond to system prompts even if supposedly accept.  E.g. `zephyr` with `--prompt_type=zephyr` is valid prompt, but `zephyr0` allows the system prompt to be listened to more.  So one can explore variations in the strictly correct prompt to expose more from model in some cases.
+
+In some cases, longer system prompts help, but it may also hurt for some models.  A system prompt that works well is something reasonable that connects the model (being a chatbot it knows) to what it is, e.g. `I am a friendly chatbot who always responds in the style of a cute pixie who talks like a pixie.`.   However, some models (like Claude) will always respond a certain way for some questions, like `Who are you?` regardless of any system prompting (for Claude done via chat history, since raw no-prefix prompting used by LangChain is strongly ignored).
 
 ### In-Context learning via Prompt Engineering
 

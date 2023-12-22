@@ -52,10 +52,15 @@ _H2OGPT_PARAMETERS_TO_CLIENT = collections.OrderedDict(
     chunk_size="langchain_chunk_size",
     document_subset="langchain_document_subset",
     document_choice="langchain_document_choice",
+    document_source_substrings="langchain_document_source_substrings",
+    document_source_substrings_op="langchain_document_source_substrings_op",
+    document_content_substrings="langchain_document_content_substrings",
+    document_content_substrings_op="langchain_document_content_substrings_op",
     pre_prompt_query="pre_prompt_query",
     prompt_query="prompt_query",
     pre_prompt_summary="pre_prompt_summary",
     prompt_summary="prompt_summary",
+    hyde_llm_prompt="hyde_llm_prompt",
     system_prompt="system_prompt",
     image_audio_loaders="image_audio_loaders",
     pdf_loaders="pdf_loaders",
@@ -74,10 +79,12 @@ _H2OGPT_PARAMETERS_TO_CLIENT = collections.OrderedDict(
     docs_joiner="docs_joiner",
     hyde_level="hyde_level",
     hyde_template="hyde_template",
+    hyde_show_only_final="hyde_show_only_final",
     doc_json_mode="doc_json_mode",
     chatbot_role="chatbot_role",
     speaker="speaker",
     tts_language="tts_language",
+    tts_speed="tts_speed",
 )
 
 
@@ -122,10 +129,15 @@ _DEFAULT_PARAMETERS: Dict[str, Any] = dict(
     langchain_chunk_size=512,  # langchain: chunk size for document chunking
     langchain_document_subset=DocumentSubset.Relevant.name,
     langchain_document_choice=[],
+    langchain_document_source_substrings=[],
+    langchain_document_source_substrings_op='and',
+    langchain_document_content_substrings=[],
+    langchain_document_content_substrings_op='and',
     pre_prompt_query=[],
     prompt_query="",
     pre_prompt_summary="",
     prompt_summary="",
+    hyde_llm_prompt="",
     system_prompt="",
     image_audio_loaders=[],
     pdf_loaders=[],
@@ -144,10 +156,12 @@ _DEFAULT_PARAMETERS: Dict[str, Any] = dict(
     docs_joiner="\n\n",
     hyde_level=0,
     hyde_template=None,
+    hyde_show_only_final=None,
     doc_json_mode=False,
     chatbot_role="None",
     speaker="None",
     tts_language="autodetect",
+    tts_speed=1.0,
 )
 
 
@@ -241,10 +255,12 @@ class TextCompletionCreator:
         docs_joiner: str = "\n\n",
         hyde_level: int = 0,
         hyde_template: Optional[str] = None,
+        hyde_show_only_final: bool = False,
         doc_json_mode: bool = False,
         chatbot_role="None",
         speaker="None",
         tts_language="autodetect",
+        tts_speed=1.0,
     ) -> "TextCompletion":
         """
         Creates a new text completion.
@@ -294,10 +310,12 @@ class TextCompletionCreator:
         :param hyde_template:
                      None, 'None', 'auto' uses internal value and enable
                      '{query}' is minimal template one can pass
+        :param hyde_show_only_final: See h2oGPT server docs
         :param doc_json_mode: whether to give JSON to LLM and get JSON response back
         :param chatbot_role: See h2oGPT server docs
         :param speaker: See h2oGPT server docs
         :param tts_language: See h2oGPT server docs
+        :param tts_speed: See h2oGPT server docs
         """
         args = locals().copy()
         args["prompt_type"] = prompt_type.value  # convert to serializable type
@@ -382,10 +400,12 @@ class ChatCompletionCreator:
         docs_joiner: str = "\n\n",
         hyde_level: int = 0,
         hyde_template: Optional[str] = None,
+        hyde_show_only_final: bool = False,
         doc_json_mode: bool = False,
         chatbot_role="None",
         speaker="None",
         tts_language="autodetect",
+        tts_speed=1.0,
     ) -> "ChatCompletion":
         """
         Creates a new chat completion.
@@ -434,10 +454,12 @@ class ChatCompletionCreator:
         :param hyde_template:
                      None, 'None', 'auto' uses internal value and enable
                      '{query}' is minimal template one can pass
+        :param hyde_show_only_final: See h2oGPT server docs
         :param doc_json_mode: whether to give JSON to LLM and get JSON response back
         :param chatbot_role: See h2oGPT server docs
         :param speaker: See h2oGPT server docs
         :param tts_language: See h2oGPT server docs
+        :param tts_speed: See h2oGPT server docs
         """
         args = locals().copy()
         args["prompt_type"] = prompt_type.value  # convert to serializable type

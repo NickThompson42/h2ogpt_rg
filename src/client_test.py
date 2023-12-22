@@ -48,6 +48,8 @@ import markdown  # pip install markdown
 import pytest
 from bs4 import BeautifulSoup  # pip install beautifulsoup4
 
+from src.utils import is_gradio_version4
+
 try:
     from enums import DocumentSubset, LangChainAction
 except:
@@ -60,7 +62,7 @@ debug = False
 os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'
 
 
-def get_client(serialize=True):
+def get_client(serialize=not is_gradio_version4):
     from gradio_client import Client
 
     client = Client(get_inf_server(), serialize=serialize)
@@ -85,6 +87,10 @@ def get_args(prompt, prompt_type=None, chat=False, stream_output=False,
              chat_conversation=None,
              text_context_list=None,
              document_choice=[],
+             document_source_substrings=[],
+             document_source_substrings_op='and',
+             document_content_substrings=[],
+             document_content_substrings_op='and',
              max_time=20,
              repetition_penalty=1.0,
              do_sample=True,
@@ -122,15 +128,21 @@ def get_args(prompt, prompt_type=None, chat=False, stream_output=False,
                          chunk_size=512,
                          document_subset=DocumentSubset.Relevant.name,
                          document_choice=[] or document_choice,
+                         document_source_substrings=[] or document_source_substrings,
+                         document_source_substrings_op='and' or document_source_substrings_op,
+                         document_content_substrings=[] or document_content_substrings,
+                         document_content_substrings_op='and' or document_content_substrings_op,
                          pre_prompt_query=None,
                          prompt_query=None,
                          pre_prompt_summary=None,
                          prompt_summary=None,
+                         hyde_llm_prompt=None,
                          system_prompt=system_prompt,
                          image_audio_loaders=None,
                          pdf_loaders=None,
                          url_loaders=None,
                          jq_schema=None,
+                         extract_frames=None,
                          visible_models=visible_models,
                          h2ogpt_key=h2ogpt_key,
                          add_search_to_context=add_search_to_context,
@@ -144,11 +156,13 @@ def get_args(prompt, prompt_type=None, chat=False, stream_output=False,
                          docs_joiner=None,
                          hyde_level=0,
                          hyde_template=None,
+                         hyde_show_only_final=False,
                          doc_json_mode=False,
 
                          chatbot_role='None',
                          speaker='None',
                          tts_language='autodetect',
+                         tts_speed=1.0,
                          )
     diff = 0
     if version is None:
@@ -235,7 +249,7 @@ def run_client_nochat(prompt, prompt_type, max_new_tokens, version=None, h2ogpt_
                             visible_models=visible_models, h2ogpt_key=h2ogpt_key)
 
     api_name = '/submit_nochat'
-    client = get_client(serialize=True)
+    client = get_client(serialize=not is_gradio_version4)
     res = client.predict(
         *tuple(args),
         api_name=api_name,
@@ -258,7 +272,7 @@ def run_client_nochat_api(prompt, prompt_type, max_new_tokens, version=None, h2o
                             h2ogpt_key=h2ogpt_key)
 
     api_name = '/submit_nochat_api'  # NOTE: like submit_nochat but stable API for string dict passing
-    client = get_client(serialize=True)
+    client = get_client(serialize=not is_gradio_version4)
     res = client.predict(
         str(dict(kwargs)),
         api_name=api_name,
@@ -286,7 +300,7 @@ def run_client_nochat_api_lean(prompt, prompt_type, max_new_tokens, version=None
                   system_prompt=system_prompt)
 
     api_name = '/submit_nochat_api'  # NOTE: like submit_nochat but stable API for string dict passing
-    client = get_client(serialize=True)
+    client = get_client(serialize=not is_gradio_version4)
     res = client.predict(
         str(dict(kwargs)),
         api_name=api_name,
@@ -336,12 +350,16 @@ def run_client_nochat_api_lean_morestuff(prompt, prompt_type='human_bot', max_ne
         top_k_docs=4,
         document_subset=DocumentSubset.Relevant.name,
         document_choice=[],
+        document_source_substrings=[],
+        document_source_substrings_op='and',
+        document_content_substrings=[],
+        document_content_substrings_op='and',
         h2ogpt_key=h2ogpt_key,
         add_search_to_context=False,
     )
 
     api_name = '/submit_nochat_api'  # NOTE: like submit_nochat but stable API for string dict passing
-    client = get_client(serialize=True)
+    client = get_client(serialize=not is_gradio_version4)
     res = client.predict(
         str(dict(kwargs)),
         api_name=api_name,
@@ -388,6 +406,10 @@ def run_client_chat(prompt='',
                     chat_conversation=None,
                     system_prompt='',
                     document_choice=[],
+                    document_content_substrings=[],
+                    document_content_substrings_op='and',
+                    document_source_substrings=[],
+                    document_source_substrings_op='and',
                     top_k_docs=3,
                     max_time=20,
                     repetition_penalty=1.0,
@@ -405,6 +427,10 @@ def run_client_chat(prompt='',
                             chat_conversation=chat_conversation,
                             system_prompt=system_prompt,
                             document_choice=document_choice,
+                            document_source_substrings=document_source_substrings,
+                            document_source_substrings_op=document_source_substrings_op,
+                            document_content_substrings=document_content_substrings,
+                            document_content_substrings_op=document_content_substrings_op,
                             top_k_docs=top_k_docs,
                             max_time=max_time,
                             repetition_penalty=repetition_penalty,
@@ -413,6 +439,16 @@ def run_client_chat(prompt='',
 
 
 def run_client(client, prompt, args, kwargs, do_md_to_text=True, verbose=False):
+    if is_gradio_version4:
+        kwargs['answer_with_sources'] = True
+        kwargs['show_accordions'] = True
+        kwargs['append_sources_to_answer'] = True
+        kwargs['show_link_in_sources'] = True
+        res_dict, client = run_client_gen(client, kwargs, do_md_to_text=do_md_to_text)
+        res_dict['response'] += str(res_dict['sources_str'])
+        return res_dict, client
+        # FIXME: https://github.com/gradio-app/gradio/issues/6592
+
     assert kwargs['chat'], "Chat mode only"
     res = client.predict(*tuple(args), api_name='/instruction')
     args[-1] += [res[-1]]

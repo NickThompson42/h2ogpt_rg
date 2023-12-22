@@ -93,7 +93,9 @@ def flatten_list(lis):
     return new_lis
 
 
-def clear_torch_cache():
+def clear_torch_cache(allow_skip=False):
+    if allow_skip and os.getenv('CLEAR_CLEAR_TORCH', '2') == '1' or os.getenv('CLEAR_CLEAR_TORCH', '2') == '0':
+        return
     try:
         import torch
         if torch.cuda.is_available():
@@ -288,6 +290,16 @@ def save_generate_output(prompt=None, output=None, base_model=None, save_dir=Non
         print('Exception in saving: %s' % str(e))
 
 
+def _save_generate_tokens(response_no_refs, extra_dict):
+    # tokenize at end if need to, so doesn't block generation in multi-generator case
+    if extra_dict.get('ntokens') is None:
+        extra_dict['ntokens'] = FakeTokenizer().num_tokens_from_string(str(response_no_refs))
+        # only do below if didn't already compute ntokens, else assume also computed rate
+    if extra_dict.get('ntokens') is not None and extra_dict.get('t_generate') is not None:
+        extra_dict['tokens_persecond'] = extra_dict['ntokens'] / extra_dict['t_generate']
+    return extra_dict
+
+
 def _save_generate_output(prompt=None, output=None, base_model=None, save_dir=None, where_from='unknown where from',
                           extra_dict={}, error='', sources=[], which_api='',
                           valid_key=None, h2ogpt_key='',
@@ -300,11 +312,7 @@ def _save_generate_output(prompt=None, output=None, base_model=None, save_dir=No
     prompt = '<not set>' if prompt is None else prompt
     output = '<not set>' if output is None else output
 
-    # tokenize at end if need to, so doesn't block generation in multi-generator case
-    if extra_dict.get('ntokens') is None:
-        extra_dict['ntokens'] = FakeTokenizer().num_tokens_from_string(output)
-        # only do below if didn't already compute ntokens, else assume also computed rate
-        extra_dict['tokens_persecond'] = extra_dict['ntokens'] / extra_dict['t_generate']
+    extra_dict = _save_generate_tokens(output, extra_dict)
 
     dict_to_save = dict(prompt=prompt, text=output, time=time.ctime(),
                         base_model=base_model,
@@ -488,10 +496,11 @@ def get_sha(value):
     return hashlib.md5(str(value).encode('utf-8')).hexdigest()
 
 
-def sanitize_filename(name):
+def sanitize_filename(name, file_length_limit=250):
     """
     Sanitize file *base* names.
     :param name: name to sanitize
+    :param file_length_limit: bit smaller than 256 for safety
     :return:
     """
     bad_chars = ['[', ']', ',', '/', '\\', '\\w', '\\s', '-', '+', '\"', '\'', '>', '<', ' ', '=', ')', '(', ':', '^']
@@ -499,9 +508,9 @@ def sanitize_filename(name):
         name = name.replace(char, "_")
 
     length = len(name)
-    file_length_limit = 250  # bit smaller than 256 for safety
     sha_length = 32
     real_length_limit = file_length_limit - (sha_length + 2)
+    assert real_length_limit > 0, "Bad file limit length: %s %s" % (file_length_limit, real_length_limit)
     if length > file_length_limit:
         sha = get_sha(name)
         half_real_length_limit = max(1, int(real_length_limit / 2))
@@ -808,6 +817,9 @@ def get_mem_gpus(raise_if_exception=True, ngpus=None):
     return totalmem_gpus1, usedmem_gpus1, freemem_gpus1
 
 
+n_gpus_global = get_ngpus_vis()
+
+
 class ForkContext(threading.local):
     """
         Set context for forking
@@ -1106,26 +1118,39 @@ class FakeTokenizer:
     2) For when model doesn't directly expose tokenizer but need to count tokens
     """
 
-    def __init__(self, model_max_length=2048, encoding_name="cl100k_base", is_openai=False,
+    def __init__(self, model_max_length=2048,
+                 encoding_name="cl100k_base",
+                 is_openai=False,
+                 is_anthropic=False,
                  tokenizer=None,
                  is_llama_cpp=False):
         if model_max_length is None:
+            assert not (is_openai or is_anthropic), "Should have set model_max_length for OpenAI or Anthropic"
             model_max_length = 2048
         self.is_openai = is_openai
+        self.is_anthropic = is_anthropic
         self.is_llama_cpp = is_llama_cpp
         self.tokenizer = tokenizer
         self.model_max_length = model_max_length
-        if not self.is_openai and not self.is_llama_cpp:
+        if not self.is_openai and not self.is_anthropic and not self.is_llama_cpp:
             # don't push limit, since if using fake tokenizer, only estimate, and seen underestimates by order 250
             self.model_max_length -= 250
         self.encoding_name = encoding_name
         # The first time this runs, it will require an internet connection to download. Later runs won't need an internet connection.
-        import tiktoken
-        self.encoding = tiktoken.get_encoding(self.encoding_name)
+        if not self.is_anthropic:
+            import tiktoken
+            self.encoding = tiktoken.get_encoding(self.encoding_name)
+        else:
+            self.encoding = None
 
     def encode(self, x, *args, return_tensors="pt", **kwargs):
         if self.is_llama_cpp:  # and len(x) < 4 * 4 * self.model_max_length: # don't use llama.cpp if too much
             input_ids = self.tokenizer.tokenize(b" " + x.encode("utf-8"))
+        elif self.is_anthropic:
+            from anthropic import Anthropic
+            client = Anthropic()
+            tokenizer = client.get_tokenizer()
+            input_ids = tokenizer.encode(x).ids
         else:
             input_ids = self.encoding.encode(x, disallowed_special=())
         if return_tensors == 'pt' and isinstance(input_ids, list):
@@ -1136,11 +1161,20 @@ class FakeTokenizer:
     def decode(self, x, *args, **kwargs):
         if self.is_llama_cpp:  # and len(x) < 4 * self.model_max_length:   # don't use llama.cpp if too much
             return self.tokenizer.detokenize(x)
+        elif self.is_anthropic:
+            from anthropic import Anthropic
+            client = Anthropic()
+            tokenizer = client.get_tokenizer()
+            return tokenizer.decode(x)
         # input is input_ids[0] form
         return self.encoding.decode(x)
 
     def num_tokens_from_string(self, prompt: str) -> int:
         """Returns the number of tokens in a text string."""
+        if self.is_anthropic:
+            from anthropic import Anthropic
+            client = Anthropic()
+            return client.count_tokens(prompt)
         num_tokens = len(self.encode(prompt)['input_ids'])
         return num_tokens
 
@@ -1265,33 +1299,88 @@ try:
 except (PackageNotFoundError, AssertionError):
     have_TTS = False
 
+try:
+    assert distribution('faster_whisper') is not None
+    have_use_faster = True
+except (PackageNotFoundError, AssertionError):
+    have_use_faster = False
+
+try:
+    assert distribution('flash_attn') is not None
+    have_flash_attention = True
+    have_flash_attention_2 = distribution('flash_attn').version.startswith('2.')
+except (PackageNotFoundError, AssertionError):
+    have_flash_attention = False
+    have_flash_attention_2 = False
+
+try:
+    assert distribution('gradio') is not None
+    have_gradio = True
+    is_gradio_version4 = distribution('gradio').version.startswith('4.')
+except (PackageNotFoundError, AssertionError):
+    have_gradio = False
+    is_gradio_version4 = False
+
+try:
+    assert distribution('gradio_pdf') is not None
+    have_gradio_pdf = is_gradio_version4
+except (PackageNotFoundError, AssertionError):
+    have_gradio_pdf = False
+
+try:
+    assert distribution('pyrubberband') is not None
+    have_pyrubberband = True
+except (PackageNotFoundError, AssertionError):
+    have_pyrubberband = False
+
+try:
+    assert distribution('fiftyone') is not None
+    have_fiftyone = True
+except (PackageNotFoundError, AssertionError):
+    have_fiftyone = False
+
+try:
+    assert distribution('diffusers') is not None
+    have_diffusers = True
+except (PackageNotFoundError, AssertionError):
+    have_diffusers = False
+
+
 only_unstructured_urls = os.environ.get("ONLY_UNSTRUCTURED_URLS", "0") == "1"
 only_selenium = os.environ.get("ONLY_SELENIUM", "0") == "1"
 only_playwright = os.environ.get("ONLY_PLAYWRIGHT", "0") == "1"
 
 
-def set_openai(inference_server):
+def set_openai(inference_server, model_name=None):
     if inference_server.startswith('vllm'):
         import openvllm
-        openvllm.api_key = "EMPTY"
+        api_key = openvllm.api_key = "EMPTY"
         inf_type = inference_server.split(':')[0].strip()
         ip_port_vllm = ':'.join(inference_server.split(':')[1:])
         if ip_port_vllm.startswith('https://') or ip_port_vllm.startswith('http://'):
-            openvllm.api_base = ip_port_vllm
+            api_base = openvllm.api_base = ip_port_vllm
         else:
             ip_vllm = inference_server.split(':')[1].strip()
             port_vllm = inference_server.split(':')[2].strip()
-            openvllm.api_base = f"http://{ip_vllm}:{port_vllm}/v1"
-        return openvllm, inf_type, None, None, None, openvllm.api_key
-    else:
-        import openai
-        openai.api_key = os.getenv("OPENAI_API_KEY")
-        openai.api_base = os.environ.get("OPENAI_API_BASE", "https://api.openai.com/v1")
+            api_base = openvllm.api_base = f"http://{ip_vllm}:{port_vllm}/v1"
 
+        from openvllm import vLLM, AsyncvLLM
+        client_args = dict(base_url=api_base, api_key=api_key)
+        client = vLLM(**client_args)
+        async_client = AsyncvLLM(**client_args)
+        if inf_type in ['vllm_chat']:
+            client = client.chat.completions
+            async_client = async_client.chat.completions
+        else:
+            client = client.completions
+            async_client = async_client.completions
+
+        return client, async_client, inf_type, None, api_base, None, api_key
+    else:
+        api_key = os.getenv("OPENAI_API_KEY")
         base_url = None
         deployment_type = None
         api_version = None
-        api_key = openai.api_key
         inf_type = inference_server.split(':')[0].strip()
         if len(inference_server.split(':')) >= 2:
             deployment_type = inference_server.split(':')[1].strip()
@@ -1303,14 +1392,16 @@ def set_openai(inference_server):
         if inference_server.startswith('openai_azure'):
             if api_version in ['None', None]:
                 # for function tools support
-                api_version = "2023-10-01-preview"
+                # https://github.com/Azure/azure-rest-api-specs/tree/main/specification/cognitiveservices/data-plane/AzureOpenAI/inference/preview/2023-12-01-preview
+                api_version = "2023-12-01-preview"
             if os.getenv('OPENAI_AZURE_KEY') is not None:
                 # use this instead if exists
-                openai.api_key = api_key = os.getenv('OPENAI_AZURE_KEY')
+                api_key = os.getenv("OPENAI_AZURE_KEY")
+
         if len(inference_server.split(':')) >= 5:
             api_key0 = inference_server.split(':')[4].strip()
             if api_key0 not in ['None', None]:
-                openai.api_key = api_key = api_key0
+                api_key = api_key0
 
         if deployment_type == 'None':
             deployment_type = None
@@ -1318,7 +1409,34 @@ def set_openai(inference_server):
             base_url = None
         if base_url == 'None':
             base_url = None
-        return openai, inf_type, deployment_type, base_url, api_version, api_key
+
+        # cannot use non-chat model, uses old openai. stuff if go through to H2OOpenAI with chat model
+        if model_name:
+            chat_model = (model_name.startswith("gpt-3.5-turbo") or model_name.startswith(
+                "gpt-4")) and "-instruct" not in model_name
+            if chat_model and inf_type == 'openai_azure':
+                inf_type = 'openai_azure_chat'
+            if chat_model and inf_type == 'openai':
+                inf_type = 'openai_chat'
+
+        from openai import OpenAI, AzureOpenAI, AsyncOpenAI, AsyncAzureOpenAI
+        if inf_type in ['openai_azure', 'openai_azure_chat']:
+            client_args = dict(azure_deployment=deployment_type, azure_endpoint=base_url, api_version=api_version,
+                               api_key=api_key)
+            client = AzureOpenAI(**client_args)
+            async_client = AsyncAzureOpenAI(**client_args)
+        else:
+            client_args = dict(base_url=base_url, api_key=api_key)
+            client = OpenAI(**client_args)
+            async_client = AsyncOpenAI(**client_args)
+        if inf_type in ['openai_chat', 'openai_azure_chat']:
+            client = client.chat.completions
+            async_client = async_client.chat.completions
+        else:
+            client = client.completions
+            async_client = async_client.completions
+
+        return client, async_client, inf_type, deployment_type, base_url, api_version, api_key
 
 
 def get_list_or_str(x):
@@ -1429,6 +1547,8 @@ def lg_to_gr(
         image_audio_loaders_options.append('ASR')
         if n_gpus != 0:
             image_audio_loaders_options.append('ASRLarge')
+    if kwargs['enable_llava'] and kwargs['llava_model']:
+        image_audio_loaders_options.append('LLaVa')
 
     image_audio_loaders_options0 = []
     if have_tesseract and kwargs['enable_ocr']:
@@ -1446,20 +1566,38 @@ def lg_to_gr(
             image_audio_loaders_options0.append('ASRLarge')
         else:
             image_audio_loaders_options0.append('ASR')
+    if kwargs['enable_llava'] and kwargs['llava_model']:
+        #  and n_gpus > 0  # don't require local GPUs
+        # LLaVa better and faster if present
+        #  and kwargs['max_quality']
+        image_audio_loaders_options0.append('LLaVa')
+        if 'Caption' in  image_audio_loaders_options0:
+            image_audio_loaders_options0.remove('Caption')
+        if 'CaptionBlip2' in  image_audio_loaders_options0:
+            image_audio_loaders_options0.remove('CaptionBlip2')
 
-    pdf_loaders_options = ['PyMuPDF', 'Unstructured', 'PyPDF', 'TryHTML']
+    pdf_loaders_options = ['Unstructured', 'PyPDF', 'TryHTML']
+    if have_pymupdf:
+        pdf_loaders_options = ['PyMuPDF'] + pdf_loaders_options
     if have_tesseract:
         pdf_loaders_options.append('OCR')
     if have_doctr:
         pdf_loaders_options.append('DocTR')
 
     pdf_loaders_options0 = []
-    if kwargs['use_pymupdf'] in [True, 'auto', 'on']:
+    if have_pymupdf and kwargs['use_pymupdf'] in [True, 'auto', 'on']:
         pdf_loaders_options0.append('PyMuPDF')
     if kwargs['enable_pdf_ocr'] in [True, 'on']:
         pdf_loaders_options0.append('OCR')
     if have_doctr and kwargs['enable_pdf_doctr'] in [True, 'on']:
         pdf_loaders_options0.append('DocTR')
+    # in case my pymupdf, use pypdf as backup default
+    if kwargs['use_pypdf'] in [True, 'on'] and have_pymupdf or kwargs['use_pypdf'] in [True, 'auto', 'on'] and not have_pymupdf:
+        pdf_loaders_options0.append('PyPDF')
+    if kwargs['use_unstructured_pdf'] in [True, 'on']:
+        pdf_loaders_options0.append('Unstructured')
+    if kwargs['try_pdf_as_html'] in [True, 'on']:
+        pdf_loaders_options0.append('TryHTML')
 
     url_loaders_options = []
     if only_unstructured_urls:
@@ -1474,6 +1612,8 @@ def lg_to_gr(
             url_loaders_options.append('Selenium')
         if have_playwright:
             url_loaders_options.append('PlayWright')
+            url_loaders_options.append('ScrapeWithPlayWright')
+        url_loaders_options.append('ScrapeWithHttp')
     url_loaders_options0 = [url_loaders_options[0]]
 
     assert set(image_audio_loaders_options0).issubset(image_audio_loaders_options), "%s %s" % (
