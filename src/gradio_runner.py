@@ -58,7 +58,7 @@ from gradio_themes import H2oTheme, SoftTheme, get_h2o_title, get_simple_title, 
     get_dark_js, get_heap_js, wrap_js_to_lambda, \
     spacing_xsm, radius_xsm, text_xsm
 from prompter import prompt_type_to_model_name, prompt_types_strings, inv_prompt_type_to_model_lower, non_hf_types, \
-    get_prompt, model_names_curated
+    get_prompt, model_names_curated, get_system_prompts
 from utils import flatten_list, zip_data, s3up, clear_torch_cache, get_torch_allocated, system_info_print, \
     ping, makedirs, get_kwargs, system_info, ping_gpu, get_url, get_local_ip, \
     save_generate_output, url_alive, remove, dict_to_html, text_to_html, lg_to_gr, str_to_dict, have_serpapi, \
@@ -615,7 +615,8 @@ def go_gradio(**kwargs):
         stop_kwargs = dict(js=click_stop())
         dark_kwargs = dict(js=wrap_js_to_lambda(0, get_dark_js()))
         queue_kwargs = dict(default_concurrency_limit=kwargs['concurrency_count'])
-        mic_sources_kwargs = dict(sources=['microphone'], show_recording_waveform=False)
+        mic_sources_kwargs = dict(sources=['microphone'],
+                                  waveform_options=dict(show_controls=False, show_recording_waveform=False))
     else:
         noqueue_kwargs = dict(queue=False)
         noqueue_kwargs2 = dict()
@@ -1167,6 +1168,7 @@ def go_gradio(**kwargs):
                                                              visible=visible_model_choice,
                                                              elem_id="multi-selection",
                                                              filterable=False,
+                                                             max_choices=kwargs['max_visible_models'],
                                                              )
                                 mw0 = 100
                                 with gr.Column(min_width=mw0):
@@ -1413,11 +1415,20 @@ def go_gradio(**kwargs):
                                 prompt_type = get_prompt_type1(**kwargs)
                                 prompt_type2 = get_prompt_type2(**kwargs)
 
-                            system_prompt = gr.Textbox(label="System Prompt",
-                                                       info="If 'auto', then uses model's system prompt,"
-                                                            " else use this message."
-                                                            " If empty, no system message is used",
-                                                       value=kwargs['system_prompt'])
+                            system_prompt_type = gr.Dropdown(label="System Prompt Type",
+                                                             value=kwargs['system_prompt'],
+                                                             choices=get_system_prompts(),
+                                                             filterable=True,
+                                                             )
+                            system_prompt = gr.Textbox(label='System Prompt',
+                                                       info="Can add your own custom system prompt here",
+                                                       value=kwargs['system_prompt'], lines=2)
+
+                            def show_sys(x):
+                                return x
+
+                            system_prompt_type.change(fn=show_sys, inputs=system_prompt_type, outputs=system_prompt, **noqueue_kwargs)
+
                             context = gr.Textbox(lines=2, label="System Pre-Context",
                                                  info="Directly pre-appended without prompt processing (before Pre-Conversation)",
                                                  value=kwargs['context'])
@@ -4115,7 +4126,7 @@ def go_gradio(**kwargs):
                     save_dict = output_fun.get('save_dict', {})
                     save_dict_iter = {}
                     # ensure good visually, else markdown ignores multiple \n
-                    bot_message = fix_text_for_gradio(output, fix_latex_dollars=not api, fix_new_lines=not api)
+                    bot_message = fix_text_for_gradio(output, fix_latex_dollars=not api)
                     history[-1][1] = bot_message
 
                     if generate_speech_func_func is not None:
@@ -4124,11 +4135,8 @@ def go_gradio(**kwargs):
                             if audio0 is not None:
                                 yield history, error, sources_iter, sources_str_iter, prompt_raw_iter, llm_answers, save_dict_iter, audio0
                                 audio0 = None
-                            if sentence is not None:
-                                # print("in %s %s" % (sentence is None, audio1 is None), flush=True)
-                                yield history, error, sources_iter, sources_str_iter, prompt_raw_iter, llm_answers, save_dict_iter, audio1
-                            else:
-                                # print("break %s %s" % (sentence is None, audio1 is None), flush=True)
+                            yield history, error, sources_iter, sources_str_iter, prompt_raw_iter, llm_answers, save_dict_iter, audio1
+                            if not sentence:
                                 # while True to handle case when streaming is fast enough that see multiple sentences in single go
                                 break
                     else:
@@ -5726,7 +5734,10 @@ def go_gradio(**kwargs):
             gradio_host = ':'.join(url_split[0:1])
             gradio_port = ':'.join(url_split[1:]).split('/')[0]
         h2ogpt_key1 = get_one_key(kwargs['h2ogpt_api_keys'], kwargs['enforce_h2ogpt_api_key'])
-        run(wait=False, host=gradio_host,
+        # ensure can reach out
+        openai_host = gradio_host if gradio_host not in ['localhost', '127.0.0.1'] else '0.0.0.0'
+        run(wait=False,
+            host=openai_host,
             port=kwargs['openai_port'],
             gradio_prefix=gradio_prefix,
             gradio_host=gradio_host,

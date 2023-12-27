@@ -55,7 +55,8 @@ from utils import wrapped_partial, EThread, import_matplotlib, sanitize_filename
     have_libreoffice, have_arxiv, have_playwright, have_selenium, have_tesseract, have_doctr, have_pymupdf, set_openai, \
     get_list_or_str, have_pillow, only_selenium, only_playwright, only_unstructured_urls, get_short_name, \
     get_accordion, have_jq, get_doc, get_source, have_chromamigdb, get_token_count, reverse_ucurve_list, get_size, \
-    get_test_name_core, download_simple, have_fiftyone, have_librosa, return_good_url, n_gpus_global
+    get_test_name_core, download_simple, have_fiftyone, have_librosa, return_good_url, n_gpus_global, \
+    get_accordion_named
 from enums import DocumentSubset, no_lora_str, model_token_mapping, source_prefix, source_postfix, non_query_commands, \
     LangChainAction, LangChainMode, DocumentChoice, LangChainTypes, font_size, head_acc, super_source_prefix, \
     super_source_postfix, langchain_modes_intrinsic, get_langchain_prompts, LangChainAgent, docs_joiner_default, \
@@ -64,7 +65,7 @@ from enums import DocumentSubset, no_lora_str, model_token_mapping, source_prefi
     user_prompt_for_fake_system_prompt
 from evaluate_params import gen_hyper, gen_hyper0
 from gen import SEED, get_limited_prompt, get_docs_tokens, get_relaxed_max_new_tokens, get_model_retry, gradio_to_llm
-from prompter import non_hf_types, PromptType, Prompter, get_stop_token_ids
+from prompter import non_hf_types, PromptType, Prompter, get_stop_token_ids, system_docqa, system_summary
 from src.serpapi import H2OSerpAPIWrapper
 from utils_langchain import StreamingGradioCallbackHandler, _chunk_sources, _add_meta, add_parser, fix_json_meta, \
     load_general_summarization_chain
@@ -1398,11 +1399,11 @@ class H2OHuggingFacePipeline(HuggingFacePipeline):
     count_output_tokens: Any = 0
 
     def _generate(
-        self,
-        prompts: List[str],
-        stop: Optional[List[str]] = None,
-        run_manager: Optional[CallbackManagerForLLMRun] = None,
-        **kwargs: Any,
+            self,
+            prompts: List[str],
+            stop: Optional[List[str]] = None,
+            run_manager: Optional[CallbackManagerForLLMRun] = None,
+            **kwargs: Any,
     ) -> LLMResult:
         self.count_input_tokens += sum([self.get_num_tokens(x) for x in prompts])
         rets = super()._generate(prompts, stop=stop, run_manager=run_manager, **kwargs)
@@ -2629,7 +2630,9 @@ def file_to_doc(file,
                 do_selenium = False
             if do_unstructured or use_unstructured:
                 docs1a = UnstructuredURLLoader(urls=final_urls, headers=dict(ssl_verify="False")).load()
-                docs1a = [x for x in docs1a if x.page_content and x.page_content != '403 Forbidden' and not x.page_content.startswith('Access Denied')]
+                docs1a = [x for x in docs1a if
+                          x.page_content and x.page_content != '403 Forbidden' and not x.page_content.startswith(
+                              'Access Denied')]
                 add_parser(docs1a, 'UnstructuredURLLoader')
                 docs1.extend(docs1a)
             if len(docs1) == 0 and have_playwright or do_playwright:
@@ -2637,7 +2640,9 @@ def file_to_doc(file,
                 from langchain.document_loaders import PlaywrightURLLoader
                 docs1a = asyncio.run(PlaywrightURLLoader(urls=final_urls).aload())
                 # docs1 = PlaywrightURLLoader(urls=[file]).load()
-                docs1a = [x for x in docs1a if x.page_content and x.page_content != '403 Forbidden' and not x.page_content.startswith('Access Denied')]
+                docs1a = [x for x in docs1a if
+                          x.page_content and x.page_content != '403 Forbidden' and not x.page_content.startswith(
+                              'Access Denied')]
                 add_parser(docs1a, 'PlaywrightURLLoader')
                 docs1.extend(docs1a)
             if len(docs1) == 0 and have_selenium or do_selenium:
@@ -2648,7 +2653,9 @@ def file_to_doc(file,
                 from selenium.common.exceptions import WebDriverException
                 try:
                     docs1a = SeleniumURLLoader(urls=final_urls).load()
-                    docs1a = [x for x in docs1a if x.page_content and x.page_content != '403 Forbidden' and not x.page_content.startswith('Access Denied')]
+                    docs1a = [x for x in docs1a if
+                              x.page_content and x.page_content != '403 Forbidden' and not x.page_content.startswith(
+                                  'Access Denied')]
                     add_parser(docs1a, 'SeleniumURLLoader')
                     docs1.extend(docs1a)
                 except WebDriverException as e:
@@ -3620,7 +3627,8 @@ def path_to_docs(path_or_paths,
         # avoid nesting, e.g. upload 1 zip and then inside many files
         # harder to handle if upload many zips with many files, inner parallel one will be disabled by joblib
         documents = ProgressParallel(n_jobs=n_jobs, verbose=10 if verbose else 0, backend='multiprocessing')(
-            delayed(path_to_doc1)(file, filei=filei0 or filei, **kwargs) for filei, file in enumerate(globs_non_image_types)
+            delayed(path_to_doc1)(file, filei=filei0 or filei, **kwargs) for filei, file in
+            enumerate(globs_non_image_types)
         )
     else:
         documents = [path_to_doc1(file, filei=filei0 or filei, **kwargs) for filei, file in
@@ -3631,7 +3639,8 @@ def path_to_docs(path_or_paths,
         # avoid nesting, e.g. upload 1 zip and then inside many files
         # harder to handle if upload many zips with many files, inner parallel one will be disabled by joblib
         image_documents = ProgressParallel(n_jobs=n_jobs, verbose=10 if verbose else 0, backend='multiprocessing')(
-            delayed(path_to_doc1)(file, filei=filei0 or filei, **kwargs) for filei, file in enumerate(globs_image_audio_types)
+            delayed(path_to_doc1)(file, filei=filei0 or filei, **kwargs) for filei, file in
+            enumerate(globs_image_audio_types)
         )
     else:
         image_documents = [path_to_doc1(file, filei=filei0 or filei, **kwargs) for filei, file in
@@ -4563,6 +4572,7 @@ def run_qa_db(**kwargs):
     kwargs['answer_with_sources'] = kwargs.get('answer_with_sources', True)
     kwargs['show_rank'] = kwargs.get('show_rank', False)
     kwargs['show_accordions'] = kwargs.get('show_accordions', True)
+    kwargs['hyde_show_intermediate_in_accordion'] = kwargs.get('hyde_show_intermediate_in_accordion', True)
     kwargs['show_link_in_sources'] = kwargs.get('show_link_in_sources', True)
     kwargs['top_k_docs_max_show'] = kwargs.get('top_k_docs_max_show', 10)
     kwargs['llamacpp_dict'] = {}  # shouldn't be required unless from test using _run_qa_db
@@ -4649,6 +4659,7 @@ def _run_qa_db(query=None,
                sanitize_bot_response=False,
                show_rank=False,
                show_accordions=True,
+               hyde_show_intermediate_in_accordion=True,
                show_link_in_sources=True,
                top_k_docs_max_show=10,
                use_llm_if_no_docs=True,
@@ -4811,6 +4822,18 @@ Respond to prompt of Final Answer with your final well-structured%s answer to th
     if doc_json_mode:
         prompter.system_prompt = system_prompt = doc_json_mode_system_prompt
 
+    # handle auto case
+    if system_prompt == 'auto':
+        changed = False
+        if query_action and langchain_mode not in langchain_modes_non_db :
+            system_prompt = system_docqa
+            changed = True
+        elif summarize_action:
+            system_prompt = system_summary
+            changed = True
+        if changed and prompter:
+            prompter.system_prompt = system_prompt
+
     assert len(set(gen_hyper).difference(inspect.signature(get_llm).parameters)) == 0
     # pass in context to LLM directly, since already has prompt_type structure
     # can't pass through langchain in get_chain() to LLM: https://github.com/hwchase17/langchain/issues/6638
@@ -4903,6 +4926,7 @@ Respond to prompt of Final Answer with your final well-structured%s answer to th
         document_content_substrings = [document_content_substrings]
 
     get_answer_kwargs = dict(show_accordions=show_accordions,
+                             hyde_show_intermediate_in_accordion=hyde_show_intermediate_in_accordion,
                              show_link_in_sources=show_link_in_sources,
                              top_k_docs_max_show=top_k_docs_max_show,
                              verbose=verbose,
@@ -4914,6 +4938,13 @@ Respond to prompt of Final Answer with your final well-structured%s answer to th
                                         lora_weights=lora_weights, max_time=max_time,
                                         sanitize_bot_response=sanitize_bot_response,
                                         verbose=verbose)
+
+    run_target_func_hyde = functools.partial(run_target,
+                                             stream_output=stream_output,
+                                             lora_weights=lora_weights, max_time=max_time,
+                                             sanitize_bot_response=sanitize_bot_response,
+                                             allow_response_no_refs=False,
+                                             verbose=verbose)
 
     func_names = list(inspect.signature(get_chain).parameters)
     sim_kwargs = {k: v for k, v in locals().items() if k in func_names}
@@ -4939,7 +4970,9 @@ Respond to prompt of Final Answer with your final well-structured%s answer to th
             return
         # if no sources, outside gpt_langchain, LLM will be used with '' input
         scores = [1] * len(docs)
-        get_answer_args = tuple([query, docs, formatted_doc_chunks, scores, show_rank,
+        get_answer_args = tuple([query, docs, formatted_doc_chunks,
+                                 llm_answers,
+                                 scores, show_rank,
                                  answer_with_sources,
                                  append_sources_to_answer])
         get_answer_kwargs.update(dict(t_run=time.time() - t_run,
@@ -4990,7 +5023,9 @@ Respond to prompt of Final Answer with your final well-structured%s answer to th
                                         async_output=async_output,
                                         only_new_text=only_new_text)
 
-    get_answer_args = tuple([query, docs, answer, scores, show_rank,
+    get_answer_args = tuple([query, docs, answer,
+                             llm_answers,
+                             scores, show_rank,
                              answer_with_sources,
                              append_sources_to_answer])
     get_answer_kwargs.update(dict(t_run=time.time() - t_run,
@@ -5050,6 +5085,7 @@ def run_target(query='',
                lora_weights='',
                max_time=0,
                sanitize_bot_response=False,
+               allow_response_no_refs=True,
                verbose=False):
     # context stuff similar to used in evaluate()
     import torch
@@ -5102,7 +5138,9 @@ def run_target(query='',
                         # in-place change to this key so exposed outside this generator
                         llm_answers[llm_answers_key] = output1
                         res_dict = dict(prompt=query, response=output1, sources='', num_prompt_tokens=0,
-                                        llm_answers=llm_answers, response_no_refs=output1, sources_str='',
+                                        llm_answers=llm_answers,
+                                        response_no_refs=output1 if allow_response_no_refs else '',
+                                        sources_str='',
                                         prompt_raw=query)
                         if output1 != output1_old:
                             yield res_dict
@@ -5365,7 +5403,7 @@ def run_hyde(*args, **kwargs):
     # get vars
     query = kwargs['query']
     sim_kwargs = kwargs['sim_kwargs']
-    run_target_func = kwargs['run_target_func']
+    run_target_func = kwargs['run_target_func_hyde']
     prompter = kwargs['prompter']
     hyde_level = kwargs['hyde_level']
     hyde_llm_prompt = kwargs['hyde_llm_prompt']
@@ -5414,7 +5452,7 @@ def run_hyde(*args, **kwargs):
         # get answer, updates llm_answers internally too
         llm_answers_key = 'llm_answers_hyde_level_%d' % hyde_level1
         # for LLM, query remains same each time
-        response_prefix = "HYDE %d/%d response:\n------------------\n" % (1 + hyde_level1, hyde_level) \
+        response_prefix = "Computing HYDE %d/%d response:\n------------------\n" % (1 + hyde_level1, hyde_level) \
             if hyde_level1 < hyde_level else ''
         answer = ''
         for ret in run_target_func(query=query,
@@ -5428,6 +5466,8 @@ def run_hyde(*args, **kwargs):
                                    only_new_text=only_new_text):
             response = response_prefix + ret['response']
             if not hyde_show_only_final:
+                pre_answer = get_hyde_acc(answer, llm_answers, get_answer_kwargs['hyde_show_intermediate_in_accordion'])
+                response = pre_answer + response
                 yield dict(prompt_raw=ret['prompt'], response=response, sources=ret['sources'],
                            num_prompt_tokens=ret['num_prompt_tokens'],
                            llm_answers=ret['llm_answers'],
@@ -5438,8 +5478,8 @@ def run_hyde(*args, **kwargs):
 
         if answer:
             # give back what have so far with any sources (what above yield doesn't do)
-            get_answer_args = tuple([query, docs,
-                                     answer,
+            get_answer_args = tuple([query, docs, answer,
+                                     llm_answers,
                                      scores, show_rank,
                                      answer_with_sources,
                                      append_sources_to_answer])
@@ -5451,8 +5491,10 @@ def run_hyde(*args, **kwargs):
             # try yield after
             # print("answer: %s" % answer)
             if not hyde_show_only_final:
-                yield dict(prompt_raw=prompt_basic, response=answer, sources=sources, num_prompt_tokens=0,
-                           llm_answers=llm_answers, response_no_refs=ret_no_refs, sources_str=sources_str)
+                yield dict(prompt_raw=prompt_basic, response=ret_no_refs, sources=sources, num_prompt_tokens=0,
+                           llm_answers=llm_answers,
+                           response_no_refs='' if hyde_level1 < hyde_level else ret_no_refs,
+                           sources_str=sources_str)
 
             # update embedding query
             # use all answers, but use newer answers first, often shorter due to LLM RLHF not used to long docs inputted,
@@ -6590,9 +6632,37 @@ def get_template(query, iinput,
     return template, template_if_no_docs, auto_reduce_chunks, query
 
 
-def get_sources_answer(query, docs, answer, scores, show_rank,
+def get_hyde_acc(answer, llm_answers, hyde_show_intermediate_in_accordion):
+    pre_answer = ''
+    count = 0
+    all_count = len(llm_answers)
+    if llm_answers and hyde_show_intermediate_in_accordion:
+        for title, content in llm_answers.items():
+            if count + 1 == all_count:
+                # skip one just generating or just generated.  Either not ready yet or final answer not in accordion
+                count += 1
+                continue
+            # improve title for UI
+            if 'llm_answers_hyde_level_0' == title:
+                title = "HYDE 0: LLM"
+            if 'llm_answers_hyde_level_1' == title:
+                title = "HYDE 1: Prompt+LLM embedding"
+            if 'llm_answers_hyde_level_2' == title:
+                title = "HYDE 2: Prompt+LLM+HYDE 1 embedding"
+            if 'llm_answers_hyde_level_3' == title:
+                title = "HYDE 3: Prompt+LLM+HYDE 1&2 embedding"
+            pre_answer += get_accordion_named(content, title, font_size=3)
+            count += 1
+
+    return pre_answer
+
+
+def get_sources_answer(query, docs, answer,
+                       llm_answers,
+                       scores, show_rank,
                        answer_with_sources, append_sources_to_answer,
                        show_accordions=True,
+                       hyde_show_intermediate_in_accordion=True,
                        show_link_in_sources=True,
                        top_k_docs_max_show=10,
                        verbose=False,
@@ -6602,10 +6672,17 @@ def get_sources_answer(query, docs, answer, scores, show_rank,
         print("query: %s" % query, flush=True)
         print("answer: %s" % answer, flush=True)
 
+    pre_answer = get_hyde_acc(answer, llm_answers, hyde_show_intermediate_in_accordion)
+    if pre_answer:
+        pre_answer = pre_answer + '<br>'
+        answer_with_acc = pre_answer + answer
+    else:
+        # e.g. extract goes here, list not str
+        answer_with_acc = answer
+
     if len(docs) == 0:
         sources = []
-        ret = answer
-        return ret, sources, answer, ''
+        return answer_with_acc, sources, answer, ''
 
     sources = [dict(score=score, content=get_doc(x), source=get_source(x), orig_index=x.metadata.get('orig_index', 0))
                for score, x in zip(scores, docs)][
@@ -6614,9 +6691,9 @@ def get_sources_answer(query, docs, answer, scores, show_rank,
         sources_str = [str(x) for x in sources]
         sources_str = '\n'.join(sources_str)
         if append_sources_to_answer:
-            ret = answer + '\n\n' + sources_str
+            ret = answer_with_acc + '\n\n' + sources_str
         else:
-            ret = answer
+            ret = answer_with_acc
         return ret, sources, answer, sources_str
 
     # link
@@ -6677,16 +6754,18 @@ def get_sources_answer(query, docs, answer, scores, show_rank,
 
     if isinstance(answer, str) and not answer.endswith('\n'):
         answer += '\n'
+    if isinstance(answer_with_acc, str) and not answer_with_acc.endswith('\n'):
+        answer_with_acc += '\n'
 
     answer_no_refs = answer
     if answer_with_sources:
         sources_str = '\n' + sorted_sources_urls
     else:
         sources_str = ''
-    if isinstance(answer, str) and append_sources_to_answer:
-        ret = answer + sources_str
+    if isinstance(answer_with_acc, str) and append_sources_to_answer:
+        ret = answer_with_acc + sources_str
     else:
-        ret = answer
+        ret = answer_with_acc
     return ret, sources, answer_no_refs, sources_str
 
 
