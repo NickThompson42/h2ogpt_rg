@@ -728,7 +728,10 @@ def main(
     :param gradio_upload_to_chatbot_num_max: Max number of things to add to chatbot
 
     :param pre_load_embedding_model: Whether to preload embedding model for shared use across DBs and users (multi-thread safe only)
-    :param embedding_gpu_id: which GPU to place embedding model on.  Only used if preloading embedding model.
+    :param embedding_gpu_id: which GPU to place embedding model on.
+                             Only used if preloading embedding model.
+                             If 'auto', then use first device as is default
+                             If 'cpu' or some other string like 'mps', then use that as device name.
 
     :param auth: gradio auth for launcher in form [(user1, pass1), (user2, pass2), ...]
                  e.g. --auth=[('jon','password')] with no spaces
@@ -3700,8 +3703,9 @@ def evaluate(
             response_no_refs = r['response_no_refs']
             sources_str = r['sources_str']
             prompt_raw = str(r['prompt_raw'])
-            yield dict(response=response, sources=[], save_dict={}, llm_answers=llm_answers,
-                       response_no_refs=response_no_refs, sources_str='', prompt_raw='')
+            if stream_output:
+                yield dict(response=response, sources=[], save_dict={}, llm_answers=llm_answers,
+                           response_no_refs=response_no_refs, sources_str='', prompt_raw='')
         extra_dict.update(dict(num_prompt_tokens=num_prompt_tokens,
                                t_generate=time.time() - t_generate,
                                # tokens_persecond computed in save_generate_output
